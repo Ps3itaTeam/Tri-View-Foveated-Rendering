@@ -78,16 +78,16 @@ Tested only on PS VR2 with an AMD RX 7900 XTX. Other headsets and GPUs (NVIDIA i
 ## Installation
 
 1. **Install the VR gameplay overhaul mod for your game first:**
-   - RE2: **RE2VR Mod Reloaded** – *(link)*
-   - RE4: **RE4VR** by Talemann – *(link)*
-   - RE7: **RE7VR Reloaded** – *(link)*
+   - RE2: [**RE2VR Mod Reloaded**](https://www.nexusmods.com/residentevil22019/mods/2483)
+   - RE4: [**RE4VR**](https://talemann-vr.com/RE4/) by Talemann
+   - RE7: [**RE7VR Reloaded**](https://www.nexusmods.com/residentevil7/mods/309) 
 
 2. **Back up the original files.** Go to the game folder (the one with the Resident Evil `.exe`) and rename these files, so you can restore them if something goes wrong:
    - `dinput8.dll` → `dinput8.dll.orig`
    - `openvr_api.dll` → `openvr_api.dll.orig`
    - `openxr_loader.dll` → `openxr_loader.dll.orig`
 
-3. **Download TRI-VIEW** for your Resident Evil game from the *(link)* page.
+3. **Download TRI-VIEW** for your Resident Evil game from the [Releases](https://github.com/Ps3itaTeam/Tri-View-Foveated-Rendering/releases) page.
 
 4. **Unzip it** and copy `dinput8.dll` and `openvr_api.dll` into the game folder, next to the `.exe`.
 
