@@ -212,7 +212,21 @@ public:
     // Einstellbar im Dev-Build unter Developer -> "RE4VR Menu Editor" (live),
     // gespeichert von RE4VRMenu in reframework/data/re4_vr/re4_vr_menu.json. Sobald die
     // Werte passen, wandern sie hier als Defaults fest hinein.
+#if defined(RE4)
+    // [RELEASE fix132 23.11.2026] RE4's menu size, not read from the configuration (its menu editor is a developer page).
+    // fix132 had RE7's defaults (panel 1.15 m, text 0.9): too small for the user; [fix133 23.11.2026] a little larger.
+    static constexpr float VR_MENU_PANEL_WIDTH_DEFAULT = 1.35f;
+    // [fix134 23.11.2026] the user: the fonts twice as large (options 1.0 -> 2.0; categories twice the file's value, see
+    // RE4VRMenu::load_menu_editor_cfg, or 2.0 without the file)
+    static constexpr float VR_MENU_RELEASE_FONT_MULT = 2.0f;
+    static constexpr float VR_MENU_DETAIL_TEXT_SCALE_DEFAULT = 2.0f;
+    static constexpr float VR_MENU_NAV_TEXT_SCALE_DEFAULT = 2.0f;
+#else
     static constexpr float VR_MENU_PANEL_WIDTH_DEFAULT = 1.0f;
+    static constexpr float VR_MENU_RELEASE_FONT_MULT = 1.0f;
+    static constexpr float VR_MENU_DETAIL_TEXT_SCALE_DEFAULT = 1.0f;
+    static constexpr float VR_MENU_NAV_TEXT_SCALE_DEFAULT = 1.0f;
+#endif
     static constexpr float VR_MENU_PANEL_DISTANCE_DEFAULT = 1.0f;
 
     float get_vr_menu_panel_width() const { return m_vr_menu_panel_width; }
@@ -379,6 +393,8 @@ private:
 
     void draw_menu_nav();
     void draw_menu_detail();
+    // [MENU TITLE 11.11.2026] the menu's name centred at the top in VR (instead of the small title bar)
+    void draw_menu_title(const char* name);
     void draw_ref_options();   // Inhalt der Kategorie "REFramework Options"
 
     // Das Menuefenster selbst (Titel, Kategorien, Inhalt) -- fuer den Desktop
@@ -482,8 +498,8 @@ private:
     float m_vr_menu_panel_distance{VR_MENU_PANEL_DISTANCE_DEFAULT};
 
     // [VR-SCHRIFT 11.09.2026]
-    float m_vr_menu_nav_text_scale{1.0f};
-    float m_vr_menu_detail_text_scale{1.0f};
+    float m_vr_menu_nav_text_scale{VR_MENU_NAV_TEXT_SCALE_DEFAULT};
+    float m_vr_menu_detail_text_scale{VR_MENU_DETAIL_TEXT_SCALE_DEFAULT};
     float m_vr_menu_logo_top_scale{0.72f};
     float m_vr_menu_logo_vr_scale{1.0f};
     float m_vr_menu_logo_vr_gap{-0.35f};   // [LOGO-ABSTAND]
@@ -503,6 +519,7 @@ private:
     float m_vr_menu_trackpad_scale{2.5f};   // [TRACKPAD-SCROLL 15.09.2026] Faktor auf das Stick-Tempo
     float m_vr_menu_background_opacity{1.0f};  // [HINTERGRUND] Deckkraft von Menu.png
     float m_menu_px_scale{1.0f};
+    float m_detail_saved_font_scale{1.0f}; // [TOOLTIPS 11.11.2026] io.FontGlobalScale around the menu's right side
     float m_menu_draw_scale{0.0f};   // [VOLLBILD] Massstab waehrend draw_menu_window, sonst 0
 
     // [MENUE-SOUNDS 11.09.2026]

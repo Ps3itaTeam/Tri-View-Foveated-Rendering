@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <spdlog/spdlog.h>
 
 #include "RETypeDB.hpp"
@@ -12,7 +13,7 @@ PrimitiveSystem* PrimitiveSystem::get() {
 
 PrimitiveBuffer* PrimitiveSystem::get_primitive_buffer() const {
     static std::optional<size_t> s_primitive_buffer_offset = [this]() -> std::optional<size_t> {
-        spdlog::info("[via::sdk::gui::renderer::PrimitiveSystem::get_primitive_buffer] Finding PrimitiveBuffer offset...");
+        REVR_LOG(spdlog::info("[via::sdk::gui::renderer::PrimitiveSystem::get_primitive_buffer] Finding PrimitiveBuffer offset..."));
 
         for (size_t i = sizeof(void*); i < 0x1000; i += sizeof(void*)) try {
             const auto potential_buffer = (PrimitiveBuffer*)((uintptr_t)this + i);
@@ -73,7 +74,7 @@ PrimitiveBuffer* PrimitiveSystem::get_primitive_buffer() const {
 
             // TODO: More heuristics and potentially make it use the reflection properties
             // for all 3 buffers which hardcode the sizes.
-            spdlog::info("[via::sdk::gui::renderer::PrimitiveSystem::get_primitive_buffer] Found PrimitiveBuffer offset at 0x{:x}", i);
+            REVR_LOG(spdlog::info("[via::sdk::gui::renderer::PrimitiveSystem::get_primitive_buffer] Found PrimitiveBuffer offset at 0x{:x}", i));
             return i;
         } catch(...) {
             continue;

@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <windows.h>
 #include <DbgHelp.h>
 #include <ShlObj.h>
@@ -13,6 +14,7 @@
 #include "REFramework.hpp"
 #include "ExceptionHandler.hpp"
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141 23.11.2026] the crash handler (its log and reframework_crash.dmp) is a debug tool
 LONG WINAPI reframework::global_exception_handler(struct _EXCEPTION_POINTERS* ei) {
     static std::recursive_mutex mtx{};
     std::scoped_lock _{ mtx };
@@ -20,36 +22,36 @@ LONG WINAPI reframework::global_exception_handler(struct _EXCEPTION_POINTERS* ei
     spdlog::flush_on(spdlog::level::err);
 
     if (_ReturnAddress() == nullptr) {
-        spdlog::warn("SUSPICIOUS EXCEPTION: _ReturnAddress() == nullptr");
+        REVR_LOG(spdlog::warn("SUSPICIOUS EXCEPTION: _ReturnAddress() == nullptr"));
     }
 
-    spdlog::error("Exception occurred: {:x}", ei->ExceptionRecord->ExceptionCode);
+    REVR_LOG(spdlog::error("Exception occurred: {:x}", ei->ExceptionRecord->ExceptionCode));
     
-    spdlog::error("RIP (exception record): {:x}", (uintptr_t)ei->ExceptionRecord->ExceptionAddress);
-    spdlog::error("RIP: {:x}", ei->ContextRecord->Rip);
-    spdlog::error("RSP: {:x}", ei->ContextRecord->Rsp);
-    spdlog::error("RCX: {:x}", ei->ContextRecord->Rcx);
-    spdlog::error("RDX: {:x}", ei->ContextRecord->Rdx);
-    spdlog::error("R8: {:x}", ei->ContextRecord->R8);
-    spdlog::error("R9: {:x}", ei->ContextRecord->R9);
-    spdlog::error("R10: {:x}", ei->ContextRecord->R10);
-    spdlog::error("R11: {:x}", ei->ContextRecord->R11);
-    spdlog::error("R12: {:x}", ei->ContextRecord->R12);
-    spdlog::error("R13: {:x}", ei->ContextRecord->R13);
-    spdlog::error("R14: {:x}", ei->ContextRecord->R14);
-    spdlog::error("R15: {:x}", ei->ContextRecord->R15);
-    spdlog::error("RAX: {:x}", ei->ContextRecord->Rax);
-    spdlog::error("RBX: {:x}", ei->ContextRecord->Rbx);
-    spdlog::error("RBP: {:x}", ei->ContextRecord->Rbp);
-    spdlog::error("RSI: {:x}", ei->ContextRecord->Rsi);
-    spdlog::error("RDI: {:x}", ei->ContextRecord->Rdi);
-    spdlog::error("EFLAGS: {:x}", ei->ContextRecord->EFlags);
-    spdlog::error("CS: {:x}", ei->ContextRecord->SegCs);
-    spdlog::error("DS: {:x}", ei->ContextRecord->SegDs);
-    spdlog::error("ES: {:x}", ei->ContextRecord->SegEs);
-    spdlog::error("FS: {:x}", ei->ContextRecord->SegFs);
-    spdlog::error("GS: {:x}", ei->ContextRecord->SegGs);
-    spdlog::error("SS: {:x}", ei->ContextRecord->SegSs);
+    REVR_LOG(spdlog::error("RIP (exception record): {:x}", (uintptr_t)ei->ExceptionRecord->ExceptionAddress));
+    REVR_LOG(spdlog::error("RIP: {:x}", ei->ContextRecord->Rip));
+    REVR_LOG(spdlog::error("RSP: {:x}", ei->ContextRecord->Rsp));
+    REVR_LOG(spdlog::error("RCX: {:x}", ei->ContextRecord->Rcx));
+    REVR_LOG(spdlog::error("RDX: {:x}", ei->ContextRecord->Rdx));
+    REVR_LOG(spdlog::error("R8: {:x}", ei->ContextRecord->R8));
+    REVR_LOG(spdlog::error("R9: {:x}", ei->ContextRecord->R9));
+    REVR_LOG(spdlog::error("R10: {:x}", ei->ContextRecord->R10));
+    REVR_LOG(spdlog::error("R11: {:x}", ei->ContextRecord->R11));
+    REVR_LOG(spdlog::error("R12: {:x}", ei->ContextRecord->R12));
+    REVR_LOG(spdlog::error("R13: {:x}", ei->ContextRecord->R13));
+    REVR_LOG(spdlog::error("R14: {:x}", ei->ContextRecord->R14));
+    REVR_LOG(spdlog::error("R15: {:x}", ei->ContextRecord->R15));
+    REVR_LOG(spdlog::error("RAX: {:x}", ei->ContextRecord->Rax));
+    REVR_LOG(spdlog::error("RBX: {:x}", ei->ContextRecord->Rbx));
+    REVR_LOG(spdlog::error("RBP: {:x}", ei->ContextRecord->Rbp));
+    REVR_LOG(spdlog::error("RSI: {:x}", ei->ContextRecord->Rsi));
+    REVR_LOG(spdlog::error("RDI: {:x}", ei->ContextRecord->Rdi));
+    REVR_LOG(spdlog::error("EFLAGS: {:x}", ei->ContextRecord->EFlags));
+    REVR_LOG(spdlog::error("CS: {:x}", ei->ContextRecord->SegCs));
+    REVR_LOG(spdlog::error("DS: {:x}", ei->ContextRecord->SegDs));
+    REVR_LOG(spdlog::error("ES: {:x}", ei->ContextRecord->SegEs));
+    REVR_LOG(spdlog::error("FS: {:x}", ei->ContextRecord->SegFs));
+    REVR_LOG(spdlog::error("GS: {:x}", ei->ContextRecord->SegGs));
+    REVR_LOG(spdlog::error("SS: {:x}", ei->ContextRecord->SegSs));
 
     utility::exceptions::dump_callstack(ei);
 
@@ -59,7 +61,7 @@ LONG WINAPI reframework::global_exception_handler(struct _EXCEPTION_POINTERS* ei
 #ifdef RE8
         // funny way to fix a crash.
         if (*module_within == utility::get_executable() && (uint32_t)ei->ContextRecord->Rcx == 0xFFFFFFFF) {
-            spdlog::info("Attempting to fix RE8 overlay draw crash...");
+            REVR_LOG(spdlog::info("Attempting to fix RE8 overlay draw crash..."));
 
             if (utility::scan(ei->ContextRecord->Rip, 4, "48 8B 9C CE")) {
                 const auto offset = *(uint32_t*)(ei->ContextRecord->Rip + 4);
@@ -72,10 +74,10 @@ LONG WINAPI reframework::global_exception_handler(struct _EXCEPTION_POINTERS* ei
                 }
 
                 static auto patch = Patch::create(ei->ContextRecord->Rip, patch_int16_bytes);
-                spdlog::info("Successfully patched RE8 overlay draw crash.");
+                REVR_LOG(spdlog::info("Successfully patched RE8 overlay draw crash."));
                 return EXCEPTION_CONTINUE_EXECUTION;
             } else {
-                spdlog::info("Instructions did not match RE8 overlay draw crash.");
+                REVR_LOG(spdlog::info("Instructions did not match RE8 overlay draw crash."));
             }
         }
 #endif
@@ -83,12 +85,12 @@ LONG WINAPI reframework::global_exception_handler(struct _EXCEPTION_POINTERS* ei
         const auto module_path = utility::get_module_path(*module_within);
 
         if (module_path) {
-            spdlog::error("Module: {:x} {}", (uintptr_t)*module_within, *module_path);
+            REVR_LOG(spdlog::error("Module: {:x} {}", (uintptr_t)*module_within, *module_path));
         } else {
-            spdlog::error("Module: Unknown");
+            REVR_LOG(spdlog::error("Module: Unknown"));
         }
     } else {
-        spdlog::error("Module: Unknown");
+        REVR_LOG(spdlog::error("Module: Unknown"));
     }
 
     auto dbghelp = LoadLibrary("dbghelp.dll");
@@ -96,7 +98,7 @@ LONG WINAPI reframework::global_exception_handler(struct _EXCEPTION_POINTERS* ei
     if (dbghelp) {
         const auto final_path = REFramework::get_persistent_dir("reframework_crash.dmp").string();
 
-        spdlog::error("Attempting to write dump to {}", final_path);
+        REVR_LOG(spdlog::error("Attempting to write dump to {}", final_path));
 
         auto f = CreateFile(final_path.c_str(), 
             GENERIC_WRITE, 
@@ -108,7 +110,7 @@ LONG WINAPI reframework::global_exception_handler(struct _EXCEPTION_POINTERS* ei
         );
 
         if (!f || f == INVALID_HANDLE_VALUE) {
-            spdlog::error("Exception occurred, but could not create dump file");
+            REVR_LOG(spdlog::error("Exception occurred, but could not create dump file"));
             return EXCEPTION_CONTINUE_SEARCH;
         }
 
@@ -131,7 +133,7 @@ LONG WINAPI reframework::global_exception_handler(struct _EXCEPTION_POINTERS* ei
 
         CloseHandle(f);
     } else {
-        spdlog::error("Exception occurred, but could not load dbghelp.dll");
+        REVR_LOG(spdlog::error("Exception occurred, but could not load dbghelp.dll"));
     }
 
     return EXCEPTION_EXECUTE_HANDLER;
@@ -140,3 +142,8 @@ LONG WINAPI reframework::global_exception_handler(struct _EXCEPTION_POINTERS* ei
 void reframework::setup_exception_handler() {
     SetUnhandledExceptionFilter(global_exception_handler);
 }
+#else
+void reframework::setup_exception_handler() {
+    // the release installs none: a crash goes to the game's own handler, no dump file is written
+}
+#endif

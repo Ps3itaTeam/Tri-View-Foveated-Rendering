@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <filesystem>
 
 #include <imgui.h>
@@ -28,25 +29,37 @@ REFrameworkRendererData g_renderer_data{
 
 namespace reframework {
 void log_error(const char* format, ...) {
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] no log in the release: the plugin's message is not even put together
     va_list args{};
     va_start(args, format);
     auto str = utility::format_string(format, args);
     va_end(args);
-    spdlog::error("[Plugin] {}", str);
+    REVR_LOG(spdlog::error("[Plugin] {}", str));
+#else
+    (void)format;
+#endif
 }
 void log_warn(const char* format, ...) {
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] no log in the release: the plugin's message is not even put together
     va_list args{};
     va_start(args, format);
     auto str = utility::format_string(format, args);
     va_end(args);
-    spdlog::warn("[Plugin] {}", str);
+    REVR_LOG(spdlog::warn("[Plugin] {}", str));
+#else
+    (void)format;
+#endif
 }
 void log_info(const char* format, ...) {
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] no log in the release: the plugin's message is not even put together
     va_list args{};
     va_start(args, format);
     auto str = utility::format_string(format, args);
     va_end(args);
-    spdlog::info("[Plugin] {}", str);
+    REVR_LOG(spdlog::info("[Plugin] {}", str));
+#else
+    (void)format;
+#endif
 }
 bool is_drawing_ui() {
     return g_framework->is_drawing_ui();
@@ -605,16 +618,16 @@ REFrameworkPluginInitializeParam g_plugin_initialize_param{
 
 void verify_sdk_pointers() {
     auto verify = [](auto& g) {
-        spdlog::info("Verifying...");
+        REVR_LOG(spdlog::info("Verifying..."));
 
         for (auto i = 0; i < sizeof(g) / sizeof(void*); ++i) {
             if (((void**)&g)[i] == nullptr) {
-                spdlog::error("SDK pointer is null at index {}", i);
+                REVR_LOG(spdlog::error("SDK pointer is null at index {}", i));
             }
         }
     };
 
-    spdlog::info("Verifying SDK pointers...");
+    REVR_LOG(spdlog::info("Verifying SDK pointers..."));
 
     verify(g_managed_object_data);
     verify(g_sdk_data);
@@ -635,20 +648,20 @@ void PluginLoader::early_init() try {
 
     std::scoped_lock _{m_mux};
 
-    spdlog::info("[PluginLoader] Module path {}", *utility::get_module_path(utility::get_executable()));
-    spdlog::info("[PluginLoader] Actual dir: {}", REFramework::get_persistent_dir().string());
+    REVR_LOG(spdlog::info("[PluginLoader] Module path {}", *utility::get_module_path(utility::get_executable())));
+    REVR_LOG(spdlog::info("[PluginLoader] Actual dir: {}", REFramework::get_persistent_dir().string()));
 
     const auto plugin_path = REFramework::get_persistent_dir() / "reframework" / "plugins";
 
-    spdlog::info("[PluginLoader] Creating directories {}", plugin_path.string());
+    REVR_LOG(spdlog::info("[PluginLoader] Creating directories {}", plugin_path.string()));
 
     if (!fs::create_directories(plugin_path) && !fs::exists(plugin_path)) {
-        spdlog::error("[PluginLoader] Failed to create directory for plugins: {}", plugin_path.string());
+        REVR_LOG(spdlog::error("[PluginLoader] Failed to create directory for plugins: {}", plugin_path.string()));
     } else {
-        spdlog::info("[PluginLoader] Created directory for plugins: {}", plugin_path.string());
+        REVR_LOG(spdlog::info("[PluginLoader] Created directory for plugins: {}", plugin_path.string()));
     }
 
-    spdlog::info("[PluginLoader] Loading plugins...");
+    REVR_LOG(spdlog::info("[PluginLoader] Loading plugins..."));
 
     // Load all dlls in the plugins directory.
     for (auto&& entry : fs::directory_iterator{plugin_path}) {
@@ -666,12 +679,12 @@ void PluginLoader::early_init() try {
             // Diese beiden werden deshalb uebersprungen und erst in
             // initialize_plugins() geladen, also nach dem ersten Frame und
             // damit nach der VR-Initialisierung. ALLE ANDEREN Plugins
-            // (PDPerfPlugin, PDAFWPlugin) bleiben unveraendert frueh --
-            // ihre Hooks muessen dort sitzen.
+            // bleiben unveraendert frueh -- ihre Hooks muessen dort sitzen.
+            // ([NO PLUGIN fix91 19.11.2026] the two old upscaler and AFW plugins were named here: the mod no longer uses them)
             const auto stem = path.stem().string();
 
             if (stem == "REFramework.NET" || stem == "Ijwhost") {
-                spdlog::info("[PluginLoader] {} wird erst nach der VR-Init geladen", stem);
+                REVR_LOG(spdlog::info("[PluginLoader] {} wird erst nach der VR-Init geladen", stem));
                 m_deferred_plugins.push_back(path);
                 continue;
             }
@@ -679,19 +692,19 @@ void PluginLoader::early_init() try {
             auto module = LoadLibraryW(path.operator std::wstring().c_str());
 
             if (module == nullptr) {
-                spdlog::error("[PluginLoader] Failed to load {}", path.string());
+                REVR_LOG(spdlog::error("[PluginLoader] Failed to load {}", path.string()));
                 m_plugin_load_errors.emplace(path.stem().string(), "Failed to load");
                 continue;
             }
 
-            spdlog::info("[PluginLoader] Loaded {}", path.string());
+            REVR_LOG(spdlog::info("[PluginLoader] Loaded {}", path.string()));
             m_plugins.emplace(path.stem().string(), module);
         }
     }
 } catch(const std::exception& e) {
-    spdlog::error("[PluginLoader] Exception during early init {}", e.what());
+    REVR_LOG(spdlog::error("[PluginLoader] Exception during early init {}", e.what()));
 } catch(...) {
-    spdlog::error("[PluginLoader] Unknown exception during early init");
+    REVR_LOG(spdlog::error("[PluginLoader] Unknown exception during early init"));
 }
 
 // [MCP/.NET 15.09.2026 -- 1:1 aus dem aktuellen Upstream uebernommen]
@@ -717,7 +730,7 @@ void PluginLoader::on_frame() {
     init_d3d_pointers();
 
     if (auto error = initialize_plugins(); error.has_value()) {
-        spdlog::error("[PluginLoader] Failed to initialize plugins: {}", error.value());
+        REVR_LOG(spdlog::error("[PluginLoader] Failed to initialize plugins: {}", error.value()));
     }
 }
 
@@ -762,12 +775,12 @@ std::optional<std::string> PluginLoader::initialize_plugins() {
         auto module = LoadLibraryW(path.operator std::wstring().c_str());
 
         if (module == nullptr) {
-            spdlog::error("[PluginLoader] Failed to load {}", path.string());
+            REVR_LOG(spdlog::error("[PluginLoader] Failed to load {}", path.string()));
             m_plugin_load_errors.emplace(path.stem().string(), "Failed to load");
             continue;
         }
 
-        spdlog::info("[PluginLoader] Loaded (verzoegert) {}", path.string());
+        REVR_LOG(spdlog::info("[PluginLoader] Loaded (verzoegert) {}", path.string()));
         m_plugins.emplace(path.stem().string(), module);
     }
 
@@ -783,7 +796,7 @@ std::optional<std::string> PluginLoader::initialize_plugins() {
         auto required_version_fn = (REFPluginRequiredVersionFn)GetProcAddress(mod, "reframework_plugin_required_version");
 
         if (required_version_fn == nullptr) {
-            spdlog::info("[PluginLoader] {} has no reframework_plugin_required_version function, skipping...", name);
+            REVR_LOG(spdlog::info("[PluginLoader] {} has no reframework_plugin_required_version function, skipping...", name));
 
             ++it;
             continue;
@@ -794,18 +807,18 @@ std::optional<std::string> PluginLoader::initialize_plugins() {
         try {
             required_version_fn(&required_version);
         } catch(...) {
-            spdlog::error("[PluginLoader] {} has an exception in reframework_plugin_required_version, skipping...", name);
+            REVR_LOG(spdlog::error("[PluginLoader] {} has an exception in reframework_plugin_required_version, skipping...", name));
             m_plugin_load_errors.emplace(name, "Exception occurred in reframework_plugin_required_version");
             FreeLibrary(mod);
             it = m_plugins.erase(it);
             continue;
         }
 
-        spdlog::info(
-            "[PluginLoader] {} requires version {}.{}.{}", name, required_version.major, required_version.minor, required_version.patch);
+        REVR_LOG(spdlog::info(
+            "[PluginLoader] {} requires version {}.{}.{}", name, required_version.major, required_version.minor, required_version.patch));
 
         if (required_version.major != g_plugin_version.major) {
-            spdlog::error("[PluginLoader] Plugin {} requires a different major version", name);
+            REVR_LOG(spdlog::error("[PluginLoader] Plugin {} requires a different major version", name));
             m_plugin_load_errors.emplace(name, "Requires a different major version");
             FreeLibrary(mod);
             it = m_plugins.erase(it);
@@ -813,7 +826,7 @@ std::optional<std::string> PluginLoader::initialize_plugins() {
         }
 
         if (required_version.minor > g_plugin_version.minor) {
-            spdlog::error("[PluginLoader] Plugin {} requires a newer minor version", name);
+            REVR_LOG(spdlog::error("[PluginLoader] Plugin {} requires a newer minor version", name));
             m_plugin_load_errors.emplace(name, "Requires a newer minor version");
             FreeLibrary(mod);
             it = m_plugins.erase(it);
@@ -821,12 +834,12 @@ std::optional<std::string> PluginLoader::initialize_plugins() {
         }
 
         if (required_version.patch > g_plugin_version.patch && required_version.minor == g_plugin_version.minor) {
-            spdlog::warn("[PluginLoader] Plugin {} desires a newer patch version", name);
+            REVR_LOG(spdlog::warn("[PluginLoader] Plugin {} desires a newer patch version", name));
             m_plugin_load_warnings.emplace(name, "Desires a newer patch version");
         }
 
         if (required_version.game_name != nullptr && std::string_view{required_version.game_name} != g_plugin_version.game_name) {
-            spdlog::error("[PluginLoader] Plugin {} is for a different game {}", name, required_version.game_name);
+            REVR_LOG(spdlog::error("[PluginLoader] Plugin {} is for a different game {}", name, required_version.game_name));
             m_plugin_load_errors.emplace(name, "Is for a different game");
             FreeLibrary(mod);
             it = m_plugins.erase(it);
@@ -847,17 +860,17 @@ std::optional<std::string> PluginLoader::initialize_plugins() {
             continue;
         }
 
-        spdlog::info("[PluginLoader] Initializing {}...", name);
+        REVR_LOG(spdlog::info("[PluginLoader] Initializing {}...", name));
         try {
             if (!init_fn(&g_plugin_initialize_param)) {
-                spdlog::error("[PluginLoader] Failed to initialize {}", name);
+                REVR_LOG(spdlog::error("[PluginLoader] Failed to initialize {}", name));
                 m_plugin_load_errors.emplace(name, "Failed to initialize");
                 FreeLibrary(mod);
                 it = m_plugins.erase(it);
                 continue;
             }
         } catch(...) {
-            spdlog::error("[PluginLoader] {} has an exception in reframework_plugin_initialize, skipping...", name);
+            REVR_LOG(spdlog::error("[PluginLoader] {} has an exception in reframework_plugin_initialize, skipping...", name));
             m_plugin_load_errors.emplace(name, "Exception occurred in reframework_plugin_initialize");
             FreeLibrary(mod);
             it = m_plugins.erase(it);

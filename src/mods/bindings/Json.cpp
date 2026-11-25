@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <filesystem>
 #include <fstream>
 
@@ -134,7 +135,7 @@ sol::object load_file(sol::this_state l, const std::string& filepath) try {
     const auto j = json::parse(std::ifstream{detail::get_datadir() / filepath});
     return detail::decode_any(l, j);
 } catch (const json::exception& e) {
-    spdlog::error("[JSON] Failed to load file {}: {}", filepath, e.what());
+    REVR_LOG(spdlog::error("[JSON] Failed to load file {}: {}", filepath, e.what()));
     return sol::nil;
 }
 
@@ -161,7 +162,7 @@ bool dump_file(const std::string& filepath, sol::object obj, sol::object indent_
     f << detail::encode_any(obj).dump(indent);
     return true;
 } catch (const std::exception& e) {
-    spdlog::error("[JSON] Failed to dump file {}: {}", filepath, e.what());
+    REVR_LOG(spdlog::error("[JSON] Failed to dump file {}: {}", filepath, e.what()));
     return false;
 }
 

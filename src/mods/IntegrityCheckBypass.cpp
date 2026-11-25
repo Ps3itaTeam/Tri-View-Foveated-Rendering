@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <unordered_set>
 #include <iomanip>
 
@@ -80,7 +81,7 @@ std::optional<std::string> IntegrityCheckBypass::on_initialize() {
     const auto module_end = g_framework->get_module() + module_size;
 
     for (auto& possible_pattern : possible_patterns) {
-        spdlog::info("Scanning for {}", possible_pattern.pat);
+        REVR_LOG(spdlog::info("Scanning for {}", possible_pattern.pat));
 
         auto integrity_check_ref = utility::scan(g_framework->get_module().as<HMODULE>(), possible_pattern.pat);
 
@@ -97,7 +98,7 @@ std::optional<std::string> IntegrityCheckBypass::on_initialize() {
             const auto ja_instruction = *integrity_check_ref + possible_pattern.offset;
 
             if (already_patched.contains(ja_instruction)) {
-                spdlog::info("IntegrityCheckBypass: ja instruction at 0x{:X} already patched, continuing...", ja_instruction);
+                REVR_LOG(spdlog::info("IntegrityCheckBypass: ja instruction at 0x{:X} already patched, continuing...", ja_instruction));
                 integrity_check_ref =
                     utility::scan(*integrity_check_ref + 1, module_end - (*integrity_check_ref + 1), possible_pattern.pat);
                 continue;
@@ -117,8 +118,9 @@ std::optional<std::string> IntegrityCheckBypass::on_initialize() {
             }
 
             // Log the patch address (ja_instruction) and bytes with spdlog
-            spdlog::info("Patch address: 0x{:X}", ja_instruction);
+            REVR_LOG(spdlog::info("Patch address: 0x{:X}", ja_instruction));
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
             // Convert patch_bytes to hex string with stringstream and then log the string with spdlog
             std::stringstream ss;
             ss << std::hex << std::setfill('0');
@@ -126,7 +128,8 @@ std::optional<std::string> IntegrityCheckBypass::on_initialize() {
                 ss << std::setw(2) << (int)patch_byte << " ";
             }
 
-            spdlog::info("Patch bytes: {}", ss.str());
+            REVR_LOG(spdlog::info("Patch bytes: {}", ss.str()));
+#endif
 
             // Patch the bytes
             m_patches.emplace_back(Patch::create(ja_instruction, patch_int16_bytes));
@@ -138,7 +141,7 @@ std::optional<std::string> IntegrityCheckBypass::on_initialize() {
 
         // If we didn't find any integrity checks
         if (m_patches.empty()) {
-            spdlog::info("Could not find any integrity checks to bypass!");
+            REVR_LOG(spdlog::info("Could not find any integrity checks to bypass!"));
         }
 #endif
     }
@@ -149,7 +152,7 @@ std::optional<std::string> IntegrityCheckBypass::on_initialize() {
     }*/
 
 #ifdef RE3
-    spdlog::info("[{:s}]: bypass_integrity_checks: {:x}", get_name().data(), (uintptr_t)m_bypass_integrity_checks);
+    REVR_LOG(spdlog::info("[{:s}]: bypass_integrity_checks: {:x}", get_name().data(), (uintptr_t)m_bypass_integrity_checks));
 #endif
 
 #ifdef MHRISE
@@ -172,16 +175,16 @@ std::optional<std::string> IntegrityCheckBypass::on_initialize() {
             const auto method = find_method_by_hash(very_cool_type, hash);
 
             if (method == nullptr) {
-                spdlog::error("Could not find very cool method", hash);
+                REVR_LOG(spdlog::error("Could not find very cool method", hash));
                 return false;
             }
 
             if (method->get_function() == nullptr) {
-                spdlog::error("[{:s}]: Could not find very_cool_type::very_cool_method!", get_name().data());
+                REVR_LOG(spdlog::error("[{:s}]: Could not find very_cool_type::very_cool_method!", get_name().data()));
                 return false;
             }
 
-            spdlog::info("[{:s}]: Patching very cool method!", get_name().data());
+            REVR_LOG(spdlog::info("[{:s}]: Patching very cool method!", get_name().data()));
         
             very_cool_patches.emplace_back(Patch::create((uintptr_t)method->get_function(), { 0xB0, 0x00, 0xC3 }, true));
 
@@ -191,7 +194,7 @@ std::optional<std::string> IntegrityCheckBypass::on_initialize() {
         patch_very_cool_method(0x21c27632fa7ba29b);
         patch_very_cool_method(0x49b943a462e8cf6a);
     } else {
-        spdlog::error("[{:s}]: Could not find very_cool_type!", get_name().data());
+        REVR_LOG(spdlog::error("[{:s}]: Could not find very_cool_type!", get_name().data()));
     }
 
     const auto very_awesome_type = sdk::find_type_definition_by_fqn(0xce04a0c6);
@@ -201,36 +204,36 @@ std::optional<std::string> IntegrityCheckBypass::on_initialize() {
 
         if (very_awesome_method != nullptr) {
             if (very_awesome_method->get_function() == nullptr) {
-                spdlog::error("[{:s}]: Could not find very_awesome_type::very_awesome_method!", get_name().data());
+                REVR_LOG(spdlog::error("[{:s}]: Could not find very_awesome_type::very_awesome_method!", get_name().data()));
                 return Mod::on_initialize();
             }
 
             const auto very_awesome_call = utility::scan_opcode((uintptr_t)very_awesome_method->get_function(), 10, 0xE8);
 
             if (!very_awesome_call) {
-                spdlog::error("[{:s}]: Could not find very_awesome_call!", get_name().data());
+                REVR_LOG(spdlog::error("[{:s}]: Could not find very_awesome_call!", get_name().data()));
                 return Mod::on_initialize();
             }
 
             const auto real_awesome_function = utility::calculate_absolute(*very_awesome_call + 1);
 
             if (real_awesome_function == 0) {
-                spdlog::error("[{:s}]: Could not find real_awesome_function!", get_name().data());
+                REVR_LOG(spdlog::error("[{:s}]: Could not find real_awesome_function!", get_name().data()));
                 return Mod::on_initialize();
             }
 
-            spdlog::info("[{:s}]: Patching very awesome method!", get_name().data());
+            REVR_LOG(spdlog::info("[{:s}]: Patching very awesome method!", get_name().data()));
 
             very_cool_patches.emplace_back(Patch::create(real_awesome_function, { 0xB0, 0x00, 0xC3 }, true));
         } else {
-            spdlog::error("[{:s}]: Could not find very_awesome_method!", get_name().data());
+            REVR_LOG(spdlog::error("[{:s}]: Could not find very_awesome_method!", get_name().data()));
         }
     } else {
-        spdlog::error("[{:s}]: Could not find very_awesome_type!", get_name().data());
+        REVR_LOG(spdlog::error("[{:s}]: Could not find very_awesome_type!", get_name().data()));
     }
 #endif
 
-    spdlog::info("Done.");
+    REVR_LOG(spdlog::info("Done."));
 
     return Mod::on_initialize();
 }
@@ -281,7 +284,7 @@ void IntegrityCheckBypass::disable_update_timers(std::string_view name) const {
 
         // Log that we are about to set these to false if they were true before
         if (update_timer_enable) {
-            spdlog::info("[{:s}]: {:s}.UpdateTimerEnable was true, disabling it...", get_name().data(), name.data());
+            REVR_LOG(spdlog::info("[{:s}]: {:s}.UpdateTimerEnable was true, disabling it...", get_name().data(), name.data()));
         }
 
         update_timer_enable = false;
@@ -291,7 +294,7 @@ void IntegrityCheckBypass::disable_update_timers(std::string_view name) const {
         auto& update_timer_late_enable = update_timer_late_enable_field->get_data<bool>(manager, true);
 
         if (update_timer_late_enable) {
-            spdlog::info("[{:s}]: {:s}.LateUpdateTimerEnable was true, disabling it...", get_name().data(), name.data());
+            REVR_LOG(spdlog::info("[{:s}]: {:s}.LateUpdateTimerEnable was true, disabling it...", get_name().data(), name.data()));
         }
 
         update_timer_late_enable = false;
@@ -329,7 +332,7 @@ void IntegrityCheckBypass::immediate_patch_re8() {
     // So we can't use the IL2CPP metadata yet, we have to resort to
     // plain old pattern scanning.
     // We're essentially patching the application entries we ignored above, but immediately.
-    spdlog::info("[IntegrityCheckBypass]: Scanning RE8...");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Scanning RE8..."));
 
     const auto game = utility::get_executable();
     const auto game_size = utility::get_module_size(game).value_or(0);
@@ -354,20 +357,20 @@ void IntegrityCheckBypass::immediate_patch_re8() {
             const auto sussy_function_start = utility::find_function_start(resolved_instruction->addr);
 
             if (!sussy_function_start) {
-                spdlog::error("[IntegrityCheckBypass]: Could not find function start for sussy_constant @ 0x{:x}", *sussy_result);
+                REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find function start for sussy_constant @ 0x{:x}", *sussy_result));
                 continue;
             }
 
             // Create a patch that returns instantly.
             static auto patch = Patch::create(sussy_function_start.value(), { 0xC3 }, true);
             patched_sussy1 = true;
-            spdlog::info("[IntegrityCheckBypass]: Patched sussy_function 1");
+            REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched sussy_function 1"));
             break;
         }
     }
 
     if (!patched_sussy1) {
-        spdlog::error("[IntegrityCheckBypass]: Could not find sussy_constant usage!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find sussy_constant usage!"));
     }
 
     // Now we need to patch the second callback.
@@ -386,10 +389,10 @@ void IntegrityCheckBypass::immediate_patch_re8() {
 
         if (sussy_function_start) {
             static auto patch = Patch::create(sussy_function_start.value(), { 0xC3 }, true);
-            spdlog::info("[IntegrityCheckBypass]: Patched sussy_function 2");
+            REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched sussy_function 2"));
         }
     } else {
-        spdlog::error("[IntegrityCheckBypass]: Could not find sussy_result_2!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find sussy_result_2!"));
     }
 
     // These are embedded checks that run during startup and sometimes during loading transitions
@@ -403,16 +406,16 @@ void IntegrityCheckBypass::immediate_patch_re8() {
     if (sussy_result_3) {
         const auto func = utility::calculate_absolute(*sussy_result_3 + 4);
         static auto patch = Patch::create(func, { 0xB0, 0x00, 0xC3 }, true);
-        spdlog::info("[IntegrityCheckBypass]: Patched sussy_function 3");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched sussy_function 3"));
     } else {
         const auto sussy_result_alternative = utility::scan(game, "8D ? 05 E8 ? ? ? ? 0F B6 C8 48 ? ? 50 48 ? ? 18 0F");
 
         if (sussy_result_alternative) {
             const auto func = utility::calculate_absolute(*sussy_result_alternative + 4);
             static auto patch = Patch::create(func, { 0xB0, 0x00, 0xC3 }, true);
-            spdlog::info("[IntegrityCheckBypass]: Patched sussy_function 3");
+            REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched sussy_function 3"));
         } else {
-            spdlog::error("[IntegrityCheckBypass]: Could not find sussy_result_3!");
+            REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find sussy_result_3!"));
         }
     }
 
@@ -421,9 +424,9 @@ void IntegrityCheckBypass::immediate_patch_re8() {
     if (sussy_result_4) {
         const auto func = utility::calculate_absolute(*sussy_result_4 + 6);
         static auto patch = Patch::create(func, { 0xB0, 0x00, 0xC3 }, true);
-        spdlog::info("[IntegrityCheckBypass]: Patched sussy_function 4");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched sussy_function 4"));
     } else {
-        spdlog::error("[IntegrityCheckBypass]: Could not find sussy_result_4!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find sussy_result_4!"));
     }
 #endif
 }
@@ -436,20 +439,20 @@ void IntegrityCheckBypass::immediate_patch_re4() {
     // As far as I can tell, this conditional jmp jumps into a via::clr::VM cleanup routine, corrupting memory.
     // This will cause the game to crash in a random location that accesses VM memory.
     // This is probably to make finding the code that causes the crash in the first place harder.
-    spdlog::info("[IntegrityCheckBypass]: Scanning RE4...");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Scanning RE4..."));
 
     const auto game = utility::get_executable();
     const auto conditional_jmp_block = utility::scan(game, "48 8B 8D D0 03 00 00 48 29 C1 75 ?");
 
     if (!conditional_jmp_block) {
-        spdlog::error("[IntegrityCheckBypass]: Could not find conditional_jmp, trying fallback.");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find conditional_jmp, trying fallback."));
 
         // mov     [rbp+192h], al
         // this is used shortly after the conditional jmp, only place that uses it.
         const auto unique_instruction = utility::scan(game, "88 85 92 01 00 00");
 
         if (!unique_instruction) {
-            spdlog::error("[IntegrityCheckBypass]: Could not find unique_instruction!");
+            REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find unique_instruction!"));
             return;
         }
 
@@ -460,32 +463,32 @@ void IntegrityCheckBypass::immediate_patch_re4() {
 
         if (short_jmp_before) {
             static auto patch = Patch::create(*short_jmp_before, { 0xEB }, true);
-            spdlog::info("[IntegrityCheckBypass]: Patched conditional_jmp!");
+            REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched conditional_jmp!"));
             return;
         }
 
         // If we've gotten to this point, we are trying the scorched earth method of trying to obtain the function "start"
         // for this giant obfuscated blob. We will get the instructions behind the unique_instruction we found by doing that,
         // and look for the nearest branch instruction to patch.
-        spdlog::error("[IntegrityCheckBypass]: Could not find short_jmp_before, trying fallback.");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find short_jmp_before, trying fallback."));
 
         // Get the preceding instructions. If this doesn't work we'll need to scan for a common instruction anchor to scan forward from...
         auto previous_instructions = utility::get_disassembly_behind(*unique_instruction);
 
         if (previous_instructions.empty()) {
-            spdlog::error("[IntegrityCheckBypass]: Could not find previous_instructions!");
+            REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find previous_instructions!"));
             return;
         }
 
         // Reverse the order of the instructions.
         std::reverse(previous_instructions.begin(), previous_instructions.end());
 
-        spdlog::info("[IntegrityCheckBypass]: Found {} previous instructions.", previous_instructions.size());
-        spdlog::info("[IntegrityCheckBypass]: Walking previous instructions...");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found {} previous instructions.", previous_instructions.size()));
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Walking previous instructions..."));
 
         for (auto& insn : previous_instructions) {
             if (insn.instrux.BranchInfo.IsBranch) {
-                spdlog::info("[IntegrityCheckBypass]: Found branch instruction, patching...");
+                REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found branch instruction, patching..."));
                 
                 if (insn.instrux.BranchInfo.IsFar) {
                     static auto patch = Patch::create(insn.addr, { 0xE9 }, true);
@@ -493,12 +496,12 @@ void IntegrityCheckBypass::immediate_patch_re4() {
                     static auto patch = Patch::create(insn.addr, { 0xEB }, true);
                 }
 
-                spdlog::info("[IntegrityCheckBypass]: Patched conditional_jmp");
+                REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched conditional_jmp"));
                 return;
             }
         }
         
-        spdlog::error("[IntegrityCheckBypass]: Could not find branch instruction to patch!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find branch instruction to patch!"));
         return;
     }
 
@@ -507,14 +510,14 @@ void IntegrityCheckBypass::immediate_patch_re4() {
     // Create a patch that always jumps.
     static auto patch = Patch::create(conditional_jmp, { 0xEB }, true);
 
-    spdlog::info("[IntegrityCheckBypass]: Patched conditional_jmp!");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched conditional_jmp!"));
 }
 
 void* IntegrityCheckBypass::renderer_create_blas_hook(void* a1, void* a2, void* a3, void* a4, void* a5) {
     if (s_corruption_when_zero != nullptr) {
         if (*s_corruption_when_zero == 0) {
             *s_corruption_when_zero = s_last_non_zero_corruption;
-            spdlog::info("[IntegrityCheckBypass]: Fixed corruption_when_zero!");
+            REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Fixed corruption_when_zero!"));
         }
 
         s_last_non_zero_corruption = *s_corruption_when_zero;
@@ -531,7 +534,7 @@ void IntegrityCheckBypass::nuke_heap_allocated_code(uintptr_t addr) {
     // Get the base of the memory region.
     MEMORY_BASIC_INFORMATION mbi{};
     if (VirtualQuery((LPCVOID)addr, &mbi, sizeof(mbi)) == 0) {
-        spdlog::error("[IntegrityCheckBypass]: VirtualQuery failed!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: VirtualQuery failed!"));
         return;
     }
     
@@ -539,7 +542,7 @@ void IntegrityCheckBypass::nuke_heap_allocated_code(uintptr_t addr) {
     const auto start = (uintptr_t)mbi.BaseAddress;
     const auto end = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
 
-    spdlog::info("[IntegrityCheckBypass]: Nuking heap allocated code at 0x{:X} - 0x{:X}", start, end);
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Nuking heap allocated code at 0x{:X} - 0x{:X}", start, end));
 
     // Fix the protection of the memory region.
     ProtectionOverride _{(void*)start, mbi.RegionSize, PAGE_EXECUTE_READWRITE};
@@ -547,7 +550,7 @@ void IntegrityCheckBypass::nuke_heap_allocated_code(uintptr_t addr) {
     // Replace every single byte with a RET (C3) instruction.
     std::memset((void*)start, 0xC3, mbi.RegionSize);
 
-    spdlog::info("[IntegrityCheckBypass]: Nuked heap allocated code at 0x{:X}", start);
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Nuked heap allocated code at 0x{:X}", start));
 }
 
 void IntegrityCheckBypass::anti_debug_watcher() try {
@@ -561,7 +564,7 @@ void IntegrityCheckBypass::anti_debug_watcher() try {
 
     // We can generally assume it's not hooked at this point if the original bytes are empty.
     if (!original_dbg_ui_remote_breakin_bytes || original_dbg_ui_remote_breakin_bytes->empty()) {
-        spdlog::info("[IntegrityCheckBypass]: Manually copying original bytes for DbgUiRemoteBreakin.");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Manually copying original bytes for DbgUiRemoteBreakin."));
         if (!original_dbg_ui_remote_breakin_bytes) {
             original_dbg_ui_remote_breakin_bytes = std::vector<uint8_t>{};
         }
@@ -575,25 +578,25 @@ void IntegrityCheckBypass::anti_debug_watcher() try {
     const uint8_t* first_8_bytes_ptr = (uint8_t*)dbg_ui_remote_breakin;
 
     if (*(uint64_t*)original_dbg_ui_remote_breakin_bytes->data() != *first_8_bytes) {
-        spdlog::info("[IntegrityCheckBypass]: DbgUiRemoteBreakin was hooked, restoring original bytes.");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: DbgUiRemoteBreakin was hooked, restoring original bytes."));
 
         if (first_8_bytes_ptr[0] == 0xE9) {
-            spdlog::info("[IntegrityCheckBypass]: DbgUiRemoteBreakin was directly hooked, resolving...");
+            REVR_LOG(spdlog::info("[IntegrityCheckBypass]: DbgUiRemoteBreakin was directly hooked, resolving..."));
             const auto resolved_jmp = utility::calculate_absolute((uintptr_t)dbg_ui_remote_breakin + 1);
             const auto is_heap_allocated = utility::get_module_within(resolved_jmp).value_or(nullptr) == nullptr;
 
             if (is_heap_allocated && !IsBadReadPtr((void*)resolved_jmp, 32)) {
-                spdlog::info("[IntegrityCheckBypass]: Nuking heap allocated code at 0x{:X}", resolved_jmp);
+                REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Nuking heap allocated code at 0x{:X}", resolved_jmp));
                 nuke_heap_allocated_code(resolved_jmp);
             }
         } else if (first_8_bytes_ptr[0] == 0xFF && first_8_bytes_ptr[1] == 0x25) {
-            spdlog::info("[IntegrityCheckBypass]: DbgUiRemoteBreakin was indirectly hooked, resolving...");
+            REVR_LOG(spdlog::info("[IntegrityCheckBypass]: DbgUiRemoteBreakin was indirectly hooked, resolving..."));
             const auto resolved_ptr = utility::calculate_absolute((uintptr_t)dbg_ui_remote_breakin + 2);
             const auto resolved_jmp = *(uintptr_t*)resolved_ptr;
             const auto is_heap_allocated = utility::get_module_within(resolved_jmp).value_or(nullptr) == nullptr;
 
             if (is_heap_allocated && !IsBadReadPtr((void*)resolved_jmp, 32)) {
-                spdlog::info("[IntegrityCheckBypass]: Nuking heap allocated code at 0x{:X}", resolved_jmp);
+                REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Nuking heap allocated code at 0x{:X}", resolved_jmp));
                 nuke_heap_allocated_code(resolved_jmp);
             }
         }
@@ -601,12 +604,12 @@ void IntegrityCheckBypass::anti_debug_watcher() try {
         ProtectionOverride _{dbg_ui_remote_breakin, original_dbg_ui_remote_breakin_bytes->size(), PAGE_EXECUTE_READWRITE};
         std::copy(original_dbg_ui_remote_breakin_bytes->begin(), original_dbg_ui_remote_breakin_bytes->end(), (uint8_t*)dbg_ui_remote_breakin);
 
-        spdlog::info("[IntegrityCheckBypass]: Restored DbgUiRemoteBreakin.");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Restored DbgUiRemoteBreakin."));
     }
 } catch (const std::exception& e) {
-    spdlog::error("[IntegrityCheckBypass]: Exception in anti_debug_watcher: {}", e.what());
+    REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Exception in anti_debug_watcher: {}", e.what()));
 } catch (...) {
-    spdlog::error("[IntegrityCheckBypass]: Unknown exception in anti_debug_watcher!");
+    REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Unknown exception in anti_debug_watcher!"));
 }
 
 void IntegrityCheckBypass::init_anti_debug_watcher() {
@@ -618,14 +621,14 @@ void IntegrityCheckBypass::init_anti_debug_watcher() {
     anti_debug_watcher();
 
     s_anti_anti_debug_thread = std::make_unique<std::jthread>([](std::stop_token stop_token) {
-        spdlog::info("[IntegrityCheckBypass]: Hello from anti_debug_watcher!");
-        spdlog::info("[IntegrityCheckBypass]: Waiting for REFramework startup to finish...");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Hello from anti_debug_watcher!"));
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Waiting for REFramework startup to finish..."));
 
         while (g_framework == nullptr) {
             std::this_thread::yield();
         }
 
-        spdlog::info("[IntegrityCheckBypass]: REFramework startup finished!");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: REFramework startup finished!"));
 
         while (!stop_token.stop_requested()) {
             anti_debug_watcher();
@@ -636,24 +639,24 @@ void IntegrityCheckBypass::init_anti_debug_watcher() {
 
 // This allows unencrypted paks to load.
 void IntegrityCheckBypass::sha3_rsa_code_midhook(safetyhook::Context& context) {
-    spdlog::info("[IntegrityCheckBypass]: sha3_code_midhook called!");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: sha3_code_midhook called!"));
     // Log registers
-    spdlog::info("[IntegrityCheckBypass]: RAX: 0x{:X}", context.rax);
-    spdlog::info("[IntegrityCheckBypass]: RCX: 0x{:X}", context.rcx);
-    spdlog::info("[IntegrityCheckBypass]: RDX: 0x{:X}", context.rdx);
-    spdlog::info("[IntegrityCheckBypass]: R8: 0x{:X}", context.r8);
-    spdlog::info("[IntegrityCheckBypass]: R9: 0x{:X}", context.r9);
-    spdlog::info("[IntegrityCheckBypass]: R10: 0x{:X}", context.r10);
-    spdlog::info("[IntegrityCheckBypass]: R11: 0x{:X}", context.r11);
-    spdlog::info("[IntegrityCheckBypass]: R12: 0x{:X}", context.r12);
-    spdlog::info("[IntegrityCheckBypass]: R13: 0x{:X}", context.r13);
-    spdlog::info("[IntegrityCheckBypass]: R14: 0x{:X}", context.r14);
-    spdlog::info("[IntegrityCheckBypass]: R15: 0x{:X}", context.r15);
-    spdlog::info("[IntegrityCheckBypass]: RSP: 0x{:X}", context.rsp);
-    spdlog::info("[IntegrityCheckBypass]: RIP: 0x{:X}", context.rip);
-    spdlog::info("[IntegrityCheckBypass]: RBP: 0x{:X}", context.rbp);
-    spdlog::info("[IntegrityCheckBypass]: RSI: 0x{:X}", context.rsi);
-    spdlog::info("[IntegrityCheckBypass]: RDI: 0x{:X}", context.rdi);
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: RAX: 0x{:X}", context.rax));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: RCX: 0x{:X}", context.rcx));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: RDX: 0x{:X}", context.rdx));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: R8: 0x{:X}", context.r8));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: R9: 0x{:X}", context.r9));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: R10: 0x{:X}", context.r10));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: R11: 0x{:X}", context.r11));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: R12: 0x{:X}", context.r12));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: R13: 0x{:X}", context.r13));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: R14: 0x{:X}", context.r14));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: R15: 0x{:X}", context.r15));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: RSP: 0x{:X}", context.rsp));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: RIP: 0x{:X}", context.rip));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: RBP: 0x{:X}", context.rbp));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: RSI: 0x{:X}", context.rsi));
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: RDI: 0x{:X}", context.rdi));
 
     enum PakFlags : uint8_t {
         ENCRYPTED = 0x8
@@ -662,42 +665,42 @@ void IntegrityCheckBypass::sha3_rsa_code_midhook(safetyhook::Context& context) {
     const auto pak_flags = (PakFlags)context.r8; // Might change, maybe add automated register detection later
 
     if ((pak_flags & PakFlags::ENCRYPTED) != 0) {
-        spdlog::info("[IntegrityCheckBypass]: Pak is encrypted, allowing decryption code to run.");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Pak is encrypted, allowing decryption code to run."));
         return;
     }
 
     context.rip = *s_sha3_code_end;
 
-    spdlog::info("[IntegrityCheckBypass]: Unencrypted pak detected, skipping decryption code!");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Unencrypted pak detected, skipping decryption code!"));
 }
 
 void IntegrityCheckBypass::restore_unencrypted_paks() {
-    spdlog::info("[IntegrityCheckBypass]: Restoring unencrypted paks...");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Restoring unencrypted paks..."));
 
     // If this breaks... we'll fix it!
     const auto game = utility::get_executable();
     const auto sha3_code_start = utility::scan(game, "C5 F8 57 C0 C5 FC 11 84 24 ? ? ? ? C5 FC 11 84 24 ? ? ? ? C5 FC 11 84 24 ? ? ? ? C5 FC 11 84 24 ? ? ? ? C5 FC 11 44 24 ? 48 C1 E9 ?");
 
     if (!sha3_code_start) {
-        spdlog::error("[IntegrityCheckBypass]: Could not find sha3_rsa_code_start!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find sha3_rsa_code_start!"));
         return;
     }
     
-    spdlog::info("[IntegrityCheckBypass]: Found sha3_rsa_code_start @ 0x{:X}", *sha3_code_start);
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found sha3_rsa_code_start @ 0x{:X}", *sha3_code_start));
 
 
     s_sha3_code_end = utility::scan(game, "48 8B 8E C0 00 00 00 48 C1 E9 ?");
 
     if (!s_sha3_code_end) {
-        spdlog::error("[IntegrityCheckBypass]: Could not find sha3_rsa_code_end, cannot restore unencrypted paks!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find sha3_rsa_code_end, cannot restore unencrypted paks!"));
         return;
     }
     
-    spdlog::info("[IntegrityCheckBypass]: Found sha3_rsa_code_end @ 0x{:X}", *s_sha3_code_end);
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found sha3_rsa_code_end @ 0x{:X}", *s_sha3_code_end));
 
     s_sha3_rsa_code_midhook = safetyhook::create_mid((void*)*sha3_code_start, &sha3_rsa_code_midhook);
 
-    spdlog::info("[IntegrityCheckBypass]: Created sha3_rsa_code_midhook!");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Created sha3_rsa_code_midhook!"));
 
     const auto previous_instructions = utility::get_disassembly_behind(*s_sha3_code_end);
 
@@ -713,7 +716,7 @@ void IntegrityCheckBypass::restore_unencrypted_paks() {
         const auto& previous_instruction = previous_instructions.back();
 
         if (previous_instruction.instrux.BranchInfo.IsBranch && previous_instruction.instrux.BranchInfo.IsConditional) {
-            spdlog::info("[IntegrityCheckBypass]: Found conditional branch instruction @ 0x{:X}, NOPing it", previous_instruction.addr);
+            REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found conditional branch instruction @ 0x{:X}, NOPing it", previous_instruction.addr));
 
             // NOP out the conditional jump
             std::vector<int16_t> nops{};
@@ -722,9 +725,9 @@ void IntegrityCheckBypass::restore_unencrypted_paks() {
 
             static auto patch = Patch::create(previous_instruction.addr, nops, true);
 
-            spdlog::info("[IntegrityCheckBypass]: NOP'd out conditional jump!");
+            REVR_LOG(spdlog::info("[IntegrityCheckBypass]: NOP'd out conditional jump!"));
         } else {
-            spdlog::warn("[IntegrityCheckBypass]: Previous instruction is not a conditional branch, cannot NOP it!");
+            REVR_LOG(spdlog::warn("[IntegrityCheckBypass]: Previous instruction is not a conditional branch, cannot NOP it!"));
         }
     }
 }
@@ -738,7 +741,7 @@ void IntegrityCheckBypass::immediate_patch_dd2() {
     // this makes the crash look like it comes from DXGI present, due to a GPU error.
     // The place this is happening is very simple, but it was not an easy find due to
     // how indirect it was + all the obfuscation.
-    spdlog::info("[IntegrityCheckBypass]: Scanning DD2...");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Scanning DD2..."));
 
     const auto game = utility::get_executable();
     const auto game_size = utility::get_module_size(game).value_or(0);
@@ -758,12 +761,12 @@ void IntegrityCheckBypass::immediate_patch_dd2() {
             const auto crasher_fn = utility::find_function_with_refs(game, { *qpf_import, *qpc_import });
 
             if (crasher_fn) {
-                spdlog::info("[IntegrityCheckBypass]: Found crasher_fn!");
+                REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found crasher_fn!"));
 
                 auto crasher_fn_ref = utility::scan_displacement_reference(game, *crasher_fn);
 
                 if (crasher_fn_ref) {
-                    spdlog::info("[IntegrityCheckBypass]: Found crasher_fn_ref");
+                    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found crasher_fn_ref"));
                 }
 
                 if (crasher_fn_ref && *(uint8_t*)(*crasher_fn_ref - 1) == 0xE9) {
@@ -773,7 +776,7 @@ void IntegrityCheckBypass::immediate_patch_dd2() {
                 }
 
                 if (crasher_fn_ref) {
-                    spdlog::info("[IntegrityCheckBypass]: Found crasher fn (real)");
+                    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found crasher fn (real)"));
 
                     // We have to use this because I think that the AVX2 scan is broken here for some reason... uh oh...
                     const auto scanner_fn_middle = utility::scan_relative_reference_scalar((uintptr_t)game, game_size - 0x1000, *crasher_fn_ref, [](uintptr_t addr) {
@@ -781,22 +784,22 @@ void IntegrityCheckBypass::immediate_patch_dd2() {
                     });
 
                     if (scanner_fn_middle) {
-                        spdlog::info("[IntegrityCheckBypass]: Found scanner_fn_middle");
+                        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found scanner_fn_middle"));
 
                         const auto scanner_fn = utility::find_function_start_unwind(*scanner_fn_middle);
 
                         if (scanner_fn) {
-                            spdlog::info("[IntegrityCheckBypass]: Found scanner_fn!");
+                            REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found scanner_fn!"));
                             static auto nuke_patch = Patch::create(*scanner_fn, { 0xC3 }, true); // ret
-                            spdlog::info("[IntegrityCheckBypass]: Patched scanner_fn!");
+                            REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched scanner_fn!"));
                         } else {
-                            spdlog::error("[IntegrityCheckBypass]: Could not find scanner_fn!");
+                            REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find scanner_fn!"));
                         }
                     } else {
-                        spdlog::error("[IntegrityCheckBypass]: Could not find scanner_fn_middle! (3)");
+                        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find scanner_fn_middle! (3)"));
                     }
                 } else {
-                    spdlog::error("[IntegrityCheckBypass]: Could not find crasher_fn_ref! (2)");
+                    REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find crasher_fn_ref! (2)"));
                 }
 
                 // Make function just ret
@@ -806,15 +809,15 @@ void IntegrityCheckBypass::immediate_patch_dd2() {
 
                 if (cmp_jz) {
                     static auto patch = Patch::create(cmp_jz->addr + 3, { 0xEB }, true);
-                    spdlog::info("[IntegrityCheckBypass]: Patched crasher_fn!");
+                    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched crasher_fn!"));
                 } else {
-                    spdlog::error("[IntegrityCheckBypass]: Could not find cmp_jz!");
+                    REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find cmp_jz!"));
                 }
             } else {
-                spdlog::error("[IntegrityCheckBypass]: Could not find crasher_fn!");
+                REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find crasher_fn!"));
             }
         } else {
-            spdlog::error("[IntegrityCheckBypass]: Could not find QueryPerformanceFrequency/Counter imports!");
+            REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find QueryPerformanceFrequency/Counter imports!"));
         }
     }
 
@@ -822,30 +825,30 @@ void IntegrityCheckBypass::immediate_patch_dd2() {
         const auto create_blas_fn_unwind = utility::find_function_start_unwind(*create_blas_fn);
 
         if (create_blas_fn_unwind) {
-            spdlog::info("[IntegrityCheckBypass]: Found createBLAS!");
+            REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found createBLAS!"));
 
             // Look for first lea rcx, [mem]
             const auto lea_rcx = utility::find_pattern_in_path((uint8_t*)*create_blas_fn_unwind, 1000, false, "48 8D 0D ? ? ? ?");
 
             if (lea_rcx) {
                 s_corruption_when_zero = (uint32_t*)utility::calculate_absolute(lea_rcx->addr + 3);
-                spdlog::info("[IntegrityCheckBypass]: Found corruption_when_zero!");
+                REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found corruption_when_zero!"));
             } else {
-                spdlog::error("[IntegrityCheckBypass]: Could not find lea_rcx!");
+                REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find lea_rcx!"));
             }
 
             s_renderer_create_blas_hook = std::make_unique<FunctionHook>(*create_blas_fn, &renderer_create_blas_hook);
 
             if (!s_renderer_create_blas_hook->create()) {
-                spdlog::error("[IntegrityCheckBypass]: Failed to hook createBLAS!");
+                REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Failed to hook createBLAS!"));
             } else {
-                spdlog::info("[IntegrityCheckBypass]: Hooked createBLAS!");
+                REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Hooked createBLAS!"));
             }
         } else {
-            spdlog::error("[IntegrityCheckBypass]: Could not find unwound createBLAS!");
+            REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find unwound createBLAS!"));
         }
     } else {
-        spdlog::error("[IntegrityCheckBypass]: Could not find createBLAS!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find createBLAS!"));
     }
 
     static std::vector<Patch::Ptr> sus_constant_patches{};
@@ -858,7 +861,7 @@ void IntegrityCheckBypass::immediate_patch_dd2() {
         sus_constant_patches.emplace_back(Patch::create(*ref + 2, { 0xEF, 0xBE, 0x37, 0x13 }, true));
     }
 
-    spdlog::info("[IntegrityCheckBypass]: Patched {} sus_constants!", sus_constant_patches.size());
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched {} sus_constants!", sus_constant_patches.size()));
 
     restore_unencrypted_paks();
 #endif
@@ -872,9 +875,9 @@ void IntegrityCheckBypass::immediate_patch_dd2() {
         // Create a patch that always jumps.
         static auto dd2patch = Patch::create(conditional_jmp, { 0xEB }, true);
 
-        spdlog::info("[IntegrityCheckBypass]: Patched conditional_jmp! (DD2)");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched conditional_jmp! (DD2)"));
     } else {
-        spdlog::error("[IntegrityCheckBypass]: Could not find conditional_jmp for DD2, attempting fallback.");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find conditional_jmp for DD2, attempting fallback."));
 
         const auto create_blas_fn = utility::find_function_from_string_ref(game, "createBLAS");
 
@@ -889,13 +892,13 @@ void IntegrityCheckBypass::immediate_patch_dd2() {
                     // Jnz->Jmp
                     static auto dd2patch = Patch::create(*conditional_jmp, { 0xEB }, true);
 
-                    spdlog::info("[IntegrityCheckBypass]: Patched conditional_jmp! (DD2)");
+                    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched conditional_jmp! (DD2)"));
                 } else {
-                    spdlog::error("[IntegrityCheckBypass]: Could not find conditional_jmp for DD2.");
+                    REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find conditional_jmp for DD2."));
                 }
             }
         } else {
-            spdlog::error("[IntegrityCheckBypass]: Could not find createBLAS!");
+            REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find createBLAS!"));
         }
     }
 
@@ -908,9 +911,9 @@ void IntegrityCheckBypass::immediate_patch_dd2() {
         // Create a patch that always jumps.
         static auto dd2patch2 = Patch::create(second_conditional_jmp, { 0xEB }, true);
 
-        spdlog::info("[IntegrityCheckBypass]: Patched second_conditional_jmp! (DD2)");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched second_conditional_jmp! (DD2)"));
     } else {
-        spdlog::error("[IntegrityCheckBypass]: Could not find second_conditional_jmp for DD2.");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find second_conditional_jmp for DD2."));
     }
 
     const auto natives_str_addr = utility::scan(game, "00 00 2F 00 6E 00 61 00 74 00 69 00 76 00 65 00 73 00 2F 00 00 00");
@@ -919,13 +922,13 @@ void IntegrityCheckBypass::immediate_patch_dd2() {
     // the game explicitly looks for this string in the path and
     // causes load failures if it finds it
     if (natives_str_addr) {
-        spdlog::info("[IntegrityCheckBypass]: Found /natives/ string for DD2. Patching...");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found /natives/ string for DD2. Patching..."));
 
         wchar_t* natives_str = (wchar_t*)(*natives_str_addr + 2);
         DWORD old_protect{};
         VirtualProtect(natives_str, 10 * sizeof(wchar_t), PAGE_EXECUTE_READWRITE, &old_protect);
 
-        spdlog::info("[IntegrityCheckBypass]: /natives/ string: {}", utility::narrow(natives_str));
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: /natives/ string: {}", utility::narrow(natives_str)));
 
         // replace string with a completely invalid string that cannot be a valid path
         natives_str[0] = L'?'; // /
@@ -933,54 +936,54 @@ void IntegrityCheckBypass::immediate_patch_dd2() {
         DWORD old2{};
         VirtualProtect(natives_str, 10 * sizeof(wchar_t), old_protect, &old2);
 
-        spdlog::info("[IntegrityCheckBypass]: Patched /natives/ string for DD2.");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched /natives/ string for DD2."));
     } else {
-        spdlog::error("[IntegrityCheckBypass]: Could not find /natives/ string for DD2.");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find /natives/ string for DD2."));
     }
 }
 
 void IntegrityCheckBypass::remove_stack_destroyer() {
-    spdlog::info("[IntegrityCheckBypass]: Searching for stack destroyer...");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Searching for stack destroyer..."));
 
     const auto game = utility::get_executable();
     const auto fn = utility::scan(game, "48 89 11 48 c7 04 24 00 00 00 00 48 81 c4 28 01 00 00");
 
     if (!fn) {
-        spdlog::error("[IntegrityCheckBypass]: Could not find stack destroyer!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find stack destroyer!"));
         return;
     }
 
     // Create a patch that returns instantly.
     static auto patch = Patch::create(*fn, { 0xC3 }, true);
 
-    spdlog::info("[IntegrityCheckBypass]: Patched stack destroyer!");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Patched stack destroyer!"));
 }
 
 void IntegrityCheckBypass::setup_pristine_syscall() {
     if (s_pristine_protect_virtual_memory != nullptr) {
-        spdlog::info("[IntegrityCheckBypass]: NtProtectVirtualMemory already setup!");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: NtProtectVirtualMemory already setup!"));
         return;
     }
 
-    spdlog::info("[IntegrityCheckBypass]: Copying pristine NtProtectVirtualMemory...");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Copying pristine NtProtectVirtualMemory..."));
 
     const auto ntdll_base = GetModuleHandleA("ntdll.dll");
 
     if (ntdll_base == nullptr) {
-        spdlog::error("[IntegrityCheckBypass]: Could not find ntdll!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find ntdll!"));
         return;
     }
 
     auto nt_protect_virtual_memory = (NtProtectVirtualMemory_t)GetProcAddress(ntdll_base, "NtProtectVirtualMemory");
     if (nt_protect_virtual_memory == nullptr) {
-        spdlog::error("[IntegrityCheckBypass]: Could not find NtProtectVirtualMemory!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find NtProtectVirtualMemory!"));
         return;
     }
 
-    spdlog::info("[IntegrityCheckBypass]: Found NtProtectVirtualMemory at 0x{:X}", (uintptr_t)nt_protect_virtual_memory);
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found NtProtectVirtualMemory at 0x{:X}", (uintptr_t)nt_protect_virtual_memory));
 
     if (*(uint8_t*)nt_protect_virtual_memory == 0xE9) {
-        spdlog::info("[IntegrityCheckBypass]: Found jmp at 0x{:X}, resolving...", (uintptr_t)nt_protect_virtual_memory);
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Found jmp at 0x{:X}, resolving...", (uintptr_t)nt_protect_virtual_memory));
         nt_protect_virtual_memory = (decltype(nt_protect_virtual_memory))utility::calculate_absolute((uintptr_t)nt_protect_virtual_memory + 1);
     }
 
@@ -996,28 +999,28 @@ void IntegrityCheckBypass::setup_pristine_syscall() {
     try {
         memcpy(s_pristine_protect_virtual_memory, nt_protect_virtual_memory, 256);
     } catch(...) {
-        spdlog::error("[IntegrityCheckBypass]: Could not copy new instructions to pristine NtProtectVirtualMemory!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not copy new instructions to pristine NtProtectVirtualMemory!"));
     }
 
-    spdlog::info("[IntegrityCheckBypass]: Copied NtProtectVirtualMemory to 0x{:X}", (uintptr_t)s_pristine_protect_virtual_memory);
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Copied NtProtectVirtualMemory to 0x{:X}", (uintptr_t)s_pristine_protect_virtual_memory));
 }
 
 // hahahah i hate this
 void IntegrityCheckBypass::fix_virtual_protect() try {
-    spdlog::info("[IntegrityCheckBypass]: Fixing VirtualProtect...");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Fixing VirtualProtect..."));
 
     setup_pristine_syscall(); // Called earlier in DllMain
 
     // Hook VirtualProtect
     s_virtual_protect_hook = std::make_unique<FunctionHookMinHook>(VirtualProtect, (uintptr_t)virtual_protect_hook);
     if (!s_virtual_protect_hook->create()) {
-        spdlog::error("[IntegrityCheckBypass]: Could not hook VirtualProtect!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not hook VirtualProtect!"));
         return;
     }
 
-    spdlog::info("[IntegrityCheckBypass]: Hooked VirtualProtect!");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Hooked VirtualProtect!"));
 } catch(...) {
-    spdlog::error("[IntegrityCheckBypass]: Could not fix VirtualProtect!");
+    REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not fix VirtualProtect!"));
 }
 
 BOOL WINAPI IntegrityCheckBypass::virtual_protect_impl(LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect, PDWORD lpflOldProtect) {
@@ -1045,7 +1048,7 @@ BOOL WINAPI IntegrityCheckBypass::virtual_protect_impl(LPVOID lpAddress, SIZE_T 
     }
 
     if (!NT_SUCCESS(result)) {
-        spdlog::error("[IntegrityCheckBypass]: NtProtectVirtualMemory(-1, {:x}, {:x}, {:x}, {:x}) failed with {:x}", (uintptr_t)address_to_protect, dwSize, flNewProtect, (uintptr_t)lpflOldProtect, (uint32_t)result);
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: NtProtectVirtualMemory(-1, {:x}, {:x}, {:x}, {:x}) failed with {:x}", (uintptr_t)address_to_protect, dwSize, flNewProtect, (uintptr_t)lpflOldProtect, (uint32_t)result));
     }
     
     return NT_SUCCESS(result);
@@ -1055,13 +1058,13 @@ BOOL WINAPI IntegrityCheckBypass::virtual_protect_impl(LPVOID lpAddress, SIZE_T 
 BOOL WINAPI IntegrityCheckBypass::virtual_protect_hook(LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect, PDWORD lpflOldProtect) try {
     static bool once = true;
     if (once) {
-        spdlog::info("[IntegrityCheckBypass]: VirtualProtect called");
+        REVR_LOG(spdlog::info("[IntegrityCheckBypass]: VirtualProtect called"));
         once = false;
     }
 
     try {
         if (memcmp(s_og_protect_virtual_memory, s_pristine_protect_virtual_memory, 32) != 0) {
-            spdlog::warn("[IntegrityCheckBypass]: Original NtProtectVirtualMemory has been modified! Attempting to restore...");
+            REVR_LOG(spdlog::warn("[IntegrityCheckBypass]: Original NtProtectVirtualMemory has been modified! Attempting to restore..."));
 
             bool needs_protection_fix = false;
 
@@ -1069,18 +1072,18 @@ BOOL WINAPI IntegrityCheckBypass::virtual_protect_hook(LPVOID lpAddress, SIZE_T 
                 memcpy(s_og_protect_virtual_memory, s_pristine_protect_virtual_memory, 32);
 
                 if (memcmp(s_og_protect_virtual_memory, s_pristine_protect_virtual_memory, 32) == 0) {
-                    spdlog::info("[IntegrityCheckBypass]: Successfully restored NtProtectVirtualMemory");
+                    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Successfully restored NtProtectVirtualMemory"));
                 } else {
                     needs_protection_fix = true;
-                    spdlog::error("[IntegrityCheckBypass]: Could not restore NtProtectVirtualMemory without changing protection!");
+                    REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not restore NtProtectVirtualMemory without changing protection!"));
                 }
             } catch(...) {
                 needs_protection_fix = true;
-                spdlog::error("[IntegrityCheckBypass]: Could not restore NtProtectVirtualMemory without changing protection! Attempting to restore protection anyway...");
+                REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not restore NtProtectVirtualMemory without changing protection! Attempting to restore protection anyway..."));
             }
 
             if (needs_protection_fix) try {
-                spdlog::info("[IntegrityCheckBypass]: Attempting to restore NtProtectVirtualMemory protection");
+                REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Attempting to restore NtProtectVirtualMemory protection"));
 
                 DWORD old{};
 
@@ -1092,33 +1095,33 @@ BOOL WINAPI IntegrityCheckBypass::virtual_protect_hook(LPVOID lpAddress, SIZE_T 
                     memcpy(s_og_protect_virtual_memory, s_pristine_protect_virtual_memory, 32);
                     virtual_protect_impl((void*)((uintptr_t)s_og_protect_virtual_memory - 1), 33, old, &old);
 
-                    spdlog::info("[IntegrityCheckBypass]: Restored NtProtectVirtualMemory");
+                    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Restored NtProtectVirtualMemory"));
                 }
             } catch(...) {
-                spdlog::error("[IntegrityCheckBypass]: Could not restore NtProtectVirtualMemory protection!");
+                REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not restore NtProtectVirtualMemory protection!"));
             }
         }
     } catch(...) {
-        spdlog::error("[IntegrityCheckBypass]: Failed to verify NtProtectVirtualMemory integrity!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Failed to verify NtProtectVirtualMemory integrity!"));
     }
 
     return virtual_protect_impl(lpAddress, dwSize, flNewProtect, lpflOldProtect);
 } catch(...) {
-    spdlog::error("[IntegrityCheckBypass]: VirtualProtect hook failed! falling back to original");
+    REVR_LOG(spdlog::error("[IntegrityCheckBypass]: VirtualProtect hook failed! falling back to original"));
     return s_virtual_protect_hook->get_original<decltype(virtual_protect_hook)>()(lpAddress, dwSize, flNewProtect, lpflOldProtect);
 }
 
 void IntegrityCheckBypass::hook_add_vectored_exception_handler() {
 #if TDB_VER >= 73
-    spdlog::info("[IntegrityCheckBypass]: Hooking AddVectoredExceptionHandler...");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Hooking AddVectoredExceptionHandler..."));
 
     s_add_vectored_exception_handler_hook = std::make_unique<FunctionHookMinHook>(AddVectoredExceptionHandler, (uintptr_t)add_vectored_exception_handler_hook);
     if (!s_add_vectored_exception_handler_hook->create()) {
-        spdlog::error("[IntegrityCheckBypass]: Could not hook AddVectoredExceptionHandler!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not hook AddVectoredExceptionHandler!"));
         return;
     }
 
-    spdlog::info("[IntegrityCheckBypass]: Hooked AddVectoredExceptionHandler!");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Hooked AddVectoredExceptionHandler!"));
 #endif
 }
 
@@ -1150,49 +1153,49 @@ PVOID WINAPI IntegrityCheckBypass::add_vectored_exception_handler_hook(ULONG Fir
             if (is_allowed || *module_within == REFramework::get_reframework_module()) 
             {
                 if (module_path) {
-                    spdlog::info("[IntegrityCheckBypass]: VEH allowed for {}", utility::narrow(*module_path));
+                    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: VEH allowed for {}", utility::narrow(*module_path)));
                 } else {
-                    spdlog::info("[IntegrityCheckBypass]: VEH allowed");
+                    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: VEH allowed"));
                 }
 
                 return s_add_vectored_exception_handler_hook->get_original<decltype(add_vectored_exception_handler_hook)>()(FirstHandler, VectoredHandler);
             }
         }
         
-        spdlog::warn("[IntegrityCheckBypass]: VEH not allowed, returning nullptr");
+        REVR_LOG(spdlog::warn("[IntegrityCheckBypass]: VEH not allowed, returning nullptr"));
         allow_veh(); // VEH past this point should be okay.
         return (void*)VectoredHandler; // some bs address so it doesnt detect it as a nullptr
     }
 
-    spdlog::info("[IntegrityCheckBypass]: VEH allowed");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: VEH allowed"));
 
     return s_add_vectored_exception_handler_hook->get_original<decltype(add_vectored_exception_handler_hook)>()(FirstHandler, VectoredHandler);
 }
 
 void IntegrityCheckBypass::hook_rtl_exit_user_process() {
-    spdlog::info("[IntegrityCheckBypass]: Hooking RtlExitUserProcess...");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Hooking RtlExitUserProcess..."));
 
     const auto ntdll = GetModuleHandleW(L"ntdll.dll");
 
     if (ntdll == nullptr) {
-        spdlog::error("[IntegrityCheckBypass]: Could not find ntdll!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find ntdll!"));
         return;
     }
 
     const auto RtlExitUserProcess = GetProcAddress(ntdll, "RtlExitUserProcess");
 
     if (RtlExitUserProcess == nullptr) {
-        spdlog::error("[IntegrityCheckBypass]: Could not find RtlExitUserProcess!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not find RtlExitUserProcess!"));
         return;
     }
 
     s_rtl_exit_user_process_hook = std::make_unique<FunctionHookMinHook>(RtlExitUserProcess, &rtl_exit_user_process_hook);
     if (!s_rtl_exit_user_process_hook->create()) {
-        spdlog::error("[IntegrityCheckBypass]: Could not hook RtlExitUserProcess!");
+        REVR_LOG(spdlog::error("[IntegrityCheckBypass]: Could not hook RtlExitUserProcess!"));
         return;
     }
 
-    spdlog::info("[IntegrityCheckBypass]: Hooked RtlExitUserProcess!");
+    REVR_LOG(spdlog::info("[IntegrityCheckBypass]: Hooked RtlExitUserProcess!"));
 }
 
 void* IntegrityCheckBypass::rtl_exit_user_process_hook(uint32_t code) {

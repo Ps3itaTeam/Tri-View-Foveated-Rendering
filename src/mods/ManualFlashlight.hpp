@@ -35,6 +35,7 @@ public:
     void on_config_load(const utility::Config& cfg) override;
     void on_config_save(utility::Config& cfg) override;
 
+    bool wants_transform_hooks() const override { return true; } // [CPU 03.11.2026] see Mod::wants_transform_hooks
     void on_update_transform(RETransform* transform) override;
 
 private:

@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include "utility/FunctionHookMinHook.hpp"
 #include "utility/String.hpp"
 
@@ -107,7 +108,7 @@ void APIProxy::on_lua_state_created(sol::state& state) {
         try {
             cb(state.lua_state());
         } catch(...) {
-            spdlog::error("[APIProxy] Exception occurred in on_lua_state_created callback; one of the plugins has an error.");
+            REVR_LOG(spdlog::error("[APIProxy] Exception occurred in on_lua_state_created callback; one of the plugins has an error."));
         }
     }
 }
@@ -119,7 +120,7 @@ void APIProxy::on_lua_state_destroyed(sol::state& state) {
         try {
             cb(state.lua_state());
         } catch(...) {
-            spdlog::error("[APIProxy] Exception occurred in on_lua_state_destroyed callback; one of the plugins has an error.");
+            REVR_LOG(spdlog::error("[APIProxy] Exception occurred in on_lua_state_destroyed callback; one of the plugins has an error."));
         }
     }
 }
@@ -146,7 +147,7 @@ void APIProxy::on_present() {
         try {
             cb();
         } catch(...) {
-            spdlog::error("[APIProxy] Exception occurred in on_present callback; one of the plugins has an error.");
+            REVR_LOG(spdlog::error("[APIProxy] Exception occurred in on_present callback; one of the plugins has an error."));
         }
     }
 }
@@ -158,7 +159,7 @@ std::unique_ptr<FunctionHookMinHook> g_load_library_ex_w_hook{nullptr};
 HMODULE load_library_ex_w_hook(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags) {
     if (lpLibFileName != nullptr) {
         if (std::wstring_view{lpLibFileName}.contains(L"cimgui.dll")) {
-            spdlog::info("[LoadLibraryExW] Redirecting cimgui.dll to ourselves");
+            REVR_LOG(spdlog::info("[LoadLibraryExW] Redirecting cimgui.dll to ourselves"));
             return REFramework::get_reframework_module();
         }
     }
@@ -172,12 +173,12 @@ void setup_hook() {
         auto llxw = GetProcAddress(GetModuleHandleA("kernel32.dll"), "LoadLibraryExW");
 
         if (llxw != nullptr) {
-            spdlog::info("[REFramework] Hooking LoadLibraryExW for cimgui.dll redirection");
+            REVR_LOG(spdlog::info("[REFramework] Hooking LoadLibraryExW for cimgui.dll redirection"));
 
             cimgui::g_load_library_ex_w_hook = std::make_unique<FunctionHookMinHook>(LoadLibraryExW, cimgui::load_library_ex_w_hook);
             
             if (!cimgui::g_load_library_ex_w_hook->create()) {
-                spdlog::error("[REFramework] Failed to hook LoadLibraryExW for cimgui.dll redirection");
+                REVR_LOG(spdlog::error("[REFramework] Failed to hook LoadLibraryExW for cimgui.dll redirection"));
                 return;
             }
         }
@@ -201,7 +202,7 @@ void APIProxy::on_frame() {
             try {
                 cb(&data);
             } catch(...) {
-                spdlog::error("[APIProxy] Exception occurred in on_imgui_frame callback; one of the plugins has an error.");
+                REVR_LOG(spdlog::error("[APIProxy] Exception occurred in on_imgui_frame callback; one of the plugins has an error."));
             }
         }
     }
@@ -223,7 +224,7 @@ void APIProxy::on_draw_ui() {
             try {
                 cb(&data);
             } catch(...) {
-                spdlog::error("[APIProxy] Exception occurred in on_imgui_draw_ui callback; one of the plugins has an error.");
+                REVR_LOG(spdlog::error("[APIProxy] Exception occurred in on_imgui_draw_ui callback; one of the plugins has an error."));
             }
         }
     }
@@ -237,7 +238,7 @@ void APIProxy::on_pre_application_entry(void* entry, const char* name, size_t ha
             try {
                 cb();
             } catch(...) {
-                spdlog::error("[APIProxy] Exception occurred in on_pre_application_entry callback ({}); one of the plugins has an error.", name);
+                REVR_LOG(spdlog::error("[APIProxy] Exception occurred in on_pre_application_entry callback ({}); one of the plugins has an error.", name));
             }
         }
     }
@@ -251,7 +252,7 @@ void APIProxy::on_application_entry(void* entry, const char* name, size_t hash) 
             try {
                 cb();
             } catch(...) {
-                spdlog::error("[APIProxy] Exception occurred in on_post_application_entry callback ({}); one of the plugins has an error.", name);
+                REVR_LOG(spdlog::error("[APIProxy] Exception occurred in on_post_application_entry callback ({}); one of the plugins has an error.", name));
             }
         }
     }
@@ -264,7 +265,7 @@ void APIProxy::on_device_reset() {
         try {
             cb();
         } catch(...) {
-            spdlog::error("[APIProxy] Exception occurred in on_device_reset callback; one of the plugins has an error.");
+            REVR_LOG(spdlog::error("[APIProxy] Exception occurred in on_device_reset callback; one of the plugins has an error."));
         }
     }
 }
@@ -278,7 +279,7 @@ bool APIProxy::on_message(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 return false;
             }
         } catch(...) {
-            spdlog::error("[APIProxy] Exception occurred in on_message callback; one of the plugins has an error.");
+            REVR_LOG(spdlog::error("[APIProxy] Exception occurred in on_message callback; one of the plugins has an error."));
             continue;
         }
     }
@@ -297,7 +298,7 @@ bool APIProxy::on_pre_gui_draw_element(REComponent* gui_element, void* primitive
                 any_false = true;
             }
         } catch(...) {
-            spdlog::error("[APIProxy] Exception occurred in on_pre_gui_draw_element callback; one of the plugins has an error.");
+            REVR_LOG(spdlog::error("[APIProxy] Exception occurred in on_pre_gui_draw_element callback; one of the plugins has an error."));
             continue;
         }
     }

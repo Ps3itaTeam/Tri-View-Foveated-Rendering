@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <utility/Scan.hpp>
 #include <utility/Module.hpp>
 #include <spdlog/spdlog.h>
@@ -9,7 +10,7 @@ namespace memory {
 void* allocate(size_t size, bool zero_memory) {
     using allocate_fn_t = void* (*)(size_t);
     static allocate_fn_t allocate_fn = []() -> allocate_fn_t {
-        spdlog::info("[via::memory::allocate] Finding allocate function...");
+        REVR_LOG(spdlog::info("[via::memory::allocate] Finding allocate function..."));
 
         // this pattern literally works back to the very first version of the RE Engine!
         // it is within the startup function that creates the window/application
@@ -18,20 +19,20 @@ void* allocate(size_t size, bool zero_memory) {
         auto ref = utility::scan(utility::get_executable(), "B9 ? ? ? ? E8 ? ? ? ? 45 33 F6 48 85 C0");
 
         if (!ref) {
-            spdlog::error("[via::memory::allocate] Failed to find allocate function!");
+            REVR_LOG(spdlog::error("[via::memory::allocate] Failed to find allocate function!"));
             return nullptr;
         }
 
-        spdlog::info("[via::memory::allocate] Ref {:x}", (uintptr_t)*ref);
+        REVR_LOG(spdlog::info("[via::memory::allocate] Ref {:x}", (uintptr_t)*ref));
 
         auto fn = (allocate_fn_t)utility::calculate_absolute(*ref + 6);
 
         if (!fn) {
-            spdlog::error("[via::memory::allocate] Failed to calculate allocate function!");
+            REVR_LOG(spdlog::error("[via::memory::allocate] Failed to calculate allocate function!"));
             return nullptr;
         }
 
-        spdlog::info("[via::memory::allocate] Found allocate function at {:x}", (uintptr_t)fn);
+        REVR_LOG(spdlog::info("[via::memory::allocate] Found allocate function at {:x}", (uintptr_t)fn));
 
         return fn;
     }();
@@ -48,7 +49,7 @@ void* allocate(size_t size, bool zero_memory) {
 void deallocate(void* ptr) {
     // In every RE Engine game, the deallocate function is the next function in the disassembly for some reason.
     static decltype(sdk::memory::deallocate)* deallocate_fn = []() -> decltype(sdk::memory::deallocate)* {
-        spdlog::info("[via::memory::deallocate] Finding deallocate function...");
+        REVR_LOG(spdlog::info("[via::memory::deallocate] Finding deallocate function..."));
 
         // this pattern literally works back to the very first version of the RE Engine!
         // it is within the startup function that creates the window/application
@@ -57,18 +58,18 @@ void deallocate(void* ptr) {
         auto ref = utility::scan(utility::get_executable(), "B9 ? ? ? ? E8 ? ? ? ? 45 33 F6 48 85 C0");
 
         if (!ref) {
-            spdlog::error("[via::memory::deallocate] Failed to find allocate function!");
+            REVR_LOG(spdlog::error("[via::memory::deallocate] Failed to find allocate function!"));
             return nullptr;
         }
 
         auto allocate_fn = utility::calculate_absolute(*ref + 6);
 
         if (!allocate_fn) {
-            spdlog::error("[via::memory::deallocate] Failed to calculate allocate function!");
+            REVR_LOG(spdlog::error("[via::memory::deallocate] Failed to calculate allocate function!"));
             return nullptr;
         }
 
-        spdlog::info("[via::memory::deallocate] Found allocate function at {:x}", (uintptr_t)allocate_fn);
+        REVR_LOG(spdlog::info("[via::memory::deallocate] Found allocate function at {:x}", (uintptr_t)allocate_fn));
 
         const auto decoded_insn = utility::decode_one((uint8_t*)allocate_fn);
         const auto first_insn_size = decoded_insn.has_value() ? decoded_insn->Length : 1;
@@ -77,13 +78,13 @@ void deallocate(void* ptr) {
         ref = utility::scan_opcode((uintptr_t)allocate_fn + first_insn_size, 50, 0xE9);
 
         if (!ref) {
-            spdlog::error("[via::memory::deallocate] Failed to find deallocate function!");
+            REVR_LOG(spdlog::error("[via::memory::deallocate] Failed to find deallocate function!"));
             return nullptr;
         }
 
         auto fn = (decltype(sdk::memory::deallocate)*)*ref;
 
-        spdlog::info("[via::memory::deallocate] Found deallocate function at {:x}", (uintptr_t)fn);
+        REVR_LOG(spdlog::info("[via::memory::deallocate] Found deallocate function at {:x}", (uintptr_t)fn));
 
         return fn;
     }();

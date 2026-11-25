@@ -1,9 +1,13 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <spdlog/spdlog.h>
 #include <utility/Scan.hpp>
 #include <utility/Module.hpp>
 
 #include "reframework/API.hpp"
 #include "RETypeDB.hpp"
+#include "NameCache.hpp"
+
+#include <memory>
 
 namespace sdk {
 RETypeDB* RETypeDB::get() {
@@ -54,7 +58,15 @@ sdk::REModule* RETypeDB::get_module(uint32_t index) const {
     return &(this->modules)[index];
 }
 
+// [CPU 04.11.2026] the lookup below behind a per-thread front (see NameCache.hpp): it builds a std::string of the name
+// and takes a shared lock for every call (the RE4VR mods ask for types by name in per-frame code)
 sdk::RETypeDefinition* RETypeDB::find_type(std::string_view name) const {
+    thread_local const auto t_front = std::make_unique<namecache::Table<sdk::RETypeDefinition*, 256, 64>>();
+
+    return t_front->get(this, name, [&]() { return find_type_uncached(name); });
+}
+
+sdk::RETypeDefinition* RETypeDB::find_type_uncached(std::string_view name) const {
     static bool map_populated = false;
 
     {
@@ -81,7 +93,7 @@ sdk::RETypeDefinition* RETypeDB::find_type(std::string_view name) const {
         }
     }
 
-    return this->find_type(name);
+    return this->find_type_uncached(name);
 }
 
 sdk::RETypeDefinition* RETypeDB::find_type_by_fqn(uint32_t fqn) const {
@@ -452,6 +464,7 @@ void* REMethodDefinition::get_function() const {
             }
         }*/
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
         {
             std::shared_lock _{ logged_encoded_0_methods_mtx };
 
@@ -465,7 +478,8 @@ void* REMethodDefinition::get_function() const {
 
         auto decl_type = this->get_declaring_type();
         auto name = decl_type != nullptr ? decl_type->get_full_name() : std::string{"null"};
-        spdlog::error("[REMethodDefinition::get_function] Encoded offset is 0 (vindex {}) (method: {}.{})", this->get_virtual_index(), name, this->get_name());
+        REVR_LOG(spdlog::error("[REMethodDefinition::get_function] Encoded offset is 0 (vindex {}) (method: {}.{})", this->get_virtual_index(), name, this->get_name()));
+#endif
         return nullptr;
     }
 
@@ -477,14 +491,14 @@ void* REMethodDefinition::get_function() const {
         const auto invoke_table = sdk::VM::get_invoke_table();
 
         if (invoke_table == nullptr) {
-            spdlog::error("[REMethodDefinition] Failed to find invoke table, cannot find encoded_function_base");
+            REVR_LOG(spdlog::error("[REMethodDefinition] Failed to find invoke table, cannot find encoded_function_base"));
             return 0;
         }
 
         const auto first_fn = invoke_table[1];
 
         if (first_fn == nullptr) {
-            spdlog::error("[REMethodDefinition] Failed to find first function in invoke table, cannot find encoded_function_base");
+            REVR_LOG(spdlog::error("[REMethodDefinition] Failed to find first function in invoke table, cannot find encoded_function_base"));
             return 0;
         }
 
@@ -513,25 +527,25 @@ void* REMethodDefinition::get_function() const {
             return utility::ExhaustionResult::BREAK;
         });
 
-        spdlog::info("[REMethodDefinition] Found encoded_function_base at {:x}", result);
+        REVR_LOG(spdlog::info("[REMethodDefinition] Found encoded_function_base at {:x}", result));
 
         return result;
     }();
 
     static void* (*get_encoded_pointer)(int32_t offset) = []() {
-        spdlog::info("[REMethodDefinition] Finding get_encoded_pointer");
+        REVR_LOG(spdlog::info("[REMethodDefinition] Finding get_encoded_pointer"));
 
         auto fn = utility::scan(utility::get_executable(), "85 C9 75 03 33 C0 C3 48 63 C1 48 8d 0D ? ? ? ? 48 03 C1 C3");
 
         // Alternative scan where we find the first LEA instruction that loads a pointer to a function basically
         // inside the invoke table.
         if (!fn) {
-            spdlog::error("[REMethodDefinition] Failed to find get_encoded_pointer");
+            REVR_LOG(spdlog::error("[REMethodDefinition] Failed to find get_encoded_pointer"));
 
             return (void* (*)(int32_t))nullptr;
         }
 
-        spdlog::info("[REMethodDefinition] Found get_encoded_pointer at {:x}", *fn);
+        REVR_LOG(spdlog::info("[REMethodDefinition] Found get_encoded_pointer at {:x}", *fn));
 
         return (void* (*)(int32_t))*fn;
     }();
@@ -547,7 +561,7 @@ void* REMethodDefinition::get_function() const {
     auto result = get_encoded_pointer(this->encoded_offset);
 
     if (result == nullptr) {
-        spdlog::error("[REMethodDefinition] Failed to get function from encoded offset, method index: {}", this->get_index());
+        REVR_LOG(spdlog::error("[REMethodDefinition] Failed to get function from encoded offset, method index: {}", this->get_index()));
     }
 
     return result;
@@ -590,9 +604,11 @@ void sdk::REMethodDefinition::invoke(void* object, const std::span<void*>& args,
 
     if (num_params != args.size()) {
         //throw std::runtime_error("Invalid number of arguments");
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
         const auto declaring_type = get_declaring_type();
         const auto decltype_name = declaring_type != nullptr ? declaring_type->get_full_name() : "unknownclass";
-        spdlog::warn("Invalid number of arguments passed to REMethodDefinition::invoke for {}.{}", decltype_name, get_name());
+        REVR_LOG(spdlog::warn("Invalid number of arguments passed to REMethodDefinition::invoke for {}.{}", decltype_name, get_name()));
+#endif
         return;
     }
 
@@ -644,10 +660,13 @@ void sdk::REMethodDefinition::invoke(void* object, const std::span<void*>& args,
 
             // exception pointer
             if (context->unkPtr->unkPtr != nullptr) {
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
                 const auto declaring_type = get_declaring_type();
                 const auto decltype_name = declaring_type != nullptr ? declaring_type->get_full_name() : "unknownclass";
-                spdlog::error("Internal game exception thrown in REMethodDefinition::invoke for {}.{}", decltype_name, get_name());
+                REVR_LOG(spdlog::error("Internal game exception thrown in REMethodDefinition::invoke for {}.{}", decltype_name, get_name()));
+#endif
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
                 const auto exception_managed_object = (::REManagedObject*)context->unkPtr->unkPtr;
 
                 if (utility::re_managed_object::is_managed_object(exception_managed_object)) {
@@ -655,12 +674,13 @@ void sdk::REMethodDefinition::invoke(void* object, const std::span<void*>& args,
 
                     if (exception_tdb_type != nullptr) {
                         const auto exception_name = exception_tdb_type->get_full_name();
-                        spdlog::error(" Exception name: {}", exception_name.data());
+                        REVR_LOG(spdlog::error(" Exception name: {}", exception_name.data()));
                     }
                 }
+#endif
 
                 if (corrupted_before_call) {
-                    spdlog::error("VMContext was already corrupted before this call, a previous exception may not have been handled properly");
+                    REVR_LOG(spdlog::error("VMContext was already corrupted before this call, a previous exception may not have been handled properly"));
                 }
 
                 out.exception_thrown = true;
@@ -668,10 +688,12 @@ void sdk::REMethodDefinition::invoke(void* object, const std::span<void*>& args,
                 context->unkPtr->unkPtr = nullptr;
             }
         } catch (sdk::VMContext::Exception&) {
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
             const auto declaring_type = get_declaring_type();
             const auto decltype_name = declaring_type != nullptr ? declaring_type->get_full_name() : "unknownclass";
 
-            spdlog::error("Exception thrown in REMethodDefinition::invoke for {}.{}", decltype_name, get_name());
+            REVR_LOG(spdlog::error("Exception thrown in REMethodDefinition::invoke for {}.{}", decltype_name, get_name()));
+#endif
             context->cleanup_after_exception(scoped_translator.get_prev_reference_count());
             
             memset(&out, 0, sizeof(out));
@@ -695,14 +717,14 @@ void sdk::REMethodDefinition::invoke(void* object, const std::span<void*>& args,
 #else
     // RE7 doesn't have the invoke wrappers that the newer games use...
     if (num_params > 3) {
-        spdlog::warn("REMethodDefinition::invoke for {} has more than 2 parameters, which is not supported at this time (RE7)", get_name());
+        REVR_LOG(spdlog::warn("REMethodDefinition::invoke for {} has more than 2 parameters, which is not supported at this time (RE7)", get_name()));
         return;
     }
 
     const bool is_static = this->is_static();
 
     if (!is_static && object == nullptr) {
-        spdlog::warn("REMethodDefinition::invoke for {} is not static, but object is nullptr", get_name());
+        REVR_LOG(spdlog::warn("REMethodDefinition::invoke for {} is not static, but object is nullptr", get_name()));
         return;
     }
 

@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <algorithm>
 #include <array>
 #include <functional>
@@ -21,6 +22,7 @@
 #include "mods/Scene.hpp"
 #include "mods/ScriptRunner.hpp"
 #include "mods/VR.hpp"
+#include "mods/vr/CpuStats.hpp" // [CPU 03.11.2026] the render thread's present path
 #include "mods/LooseFileLoader.hpp"
 #include "mods/vr/games/RE8VR.hpp"
 #include "mods/vr/games/RE4VR.hpp"
@@ -50,6 +52,7 @@
 #include "mods/vr/games/RE4VRWeapons2.hpp"
 #include "mods/vr/games/RE4VRReload.hpp"
 #include "mods/TemporalUpscaler.hpp"
+#include "mods/FoveatedRendering.hpp"
 
 #include "Mods.hpp"
 
@@ -67,6 +70,7 @@ Mods::Mods() {
 
     m_mods.emplace_back(VR::get());
     m_mods.emplace_back(TemporalUpscaler::get());
+    m_mods.emplace_back(FoveatedRendering::get());   // [FOVEATED RENDERING] after VR + upscaler
 
 #if defined(RE8) || defined(RE7)
     m_mods.emplace_back(RE8VR::get());
@@ -95,7 +99,7 @@ Mods::Mods() {
 
 #endif
 
-#ifdef DEVELOPER
+#if defined(DEVELOPER) && !REVR_RELEASE // [RELEASE SWITCH fix141] the developer tools (object explorer ...): not in the release
     auto dev_tools = std::make_shared<DeveloperTools>();
     m_mods.emplace_back(dev_tools);
 
@@ -308,10 +312,10 @@ Mods::Mods() {
 
 std::optional<std::string> Mods::on_initialize() const {
     for (auto& mod : m_mods) {
-        spdlog::info("{:s}::on_initialize()", mod->get_name().data());
+        REVR_LOG(spdlog::info("{:s}::on_initialize()", mod->get_name().data()));
 
         if (auto e = mod->on_initialize(); e != std::nullopt) {
-            spdlog::info("{:s}::on_initialize() has failed: {:s}", mod->get_name().data(), *e);
+            REVR_LOG(spdlog::info("{:s}::on_initialize() has failed: {:s}", mod->get_name().data(), *e));
             return e;
         }
     }
@@ -319,7 +323,7 @@ std::optional<std::string> Mods::on_initialize() const {
     utility::Config cfg{ (REFramework::get_persistent_dir() / REFrameworkConfig::REFRAMEWORK_CONFIG_NAME).string() };
 
     for (auto& mod : m_mods) {
-        spdlog::info("{:s}::on_config_load()", mod->get_name().data());
+        REVR_LOG(spdlog::info("{:s}::on_config_load()", mod->get_name().data()));
         mod->on_config_load(cfg);
     }
 
@@ -334,21 +338,21 @@ std::optional<std::string> Mods::on_initialize_d3d_thread() const {
 
     // once here to at least setup the values
     for (auto& mod : m_mods) {
-        spdlog::info("{:s}::on_config_load()", mod->get_name().data());
+        REVR_LOG(spdlog::info("{:s}::on_config_load()", mod->get_name().data()));
         mod->on_config_load(cfg);
     }
 
     for (auto& mod : m_mods) {
-        spdlog::info("{:s}::on_initialize_d3d_thread()", mod->get_name().data());
+        REVR_LOG(spdlog::info("{:s}::on_initialize_d3d_thread()", mod->get_name().data()));
 
         if (auto e = mod->on_initialize_d3d_thread(); e != std::nullopt) {
-            spdlog::info("{:s}::on_initialize_d3d_thread() has failed: {:s}", mod->get_name().data(), *e);
+            REVR_LOG(spdlog::info("{:s}::on_initialize_d3d_thread() has failed: {:s}", mod->get_name().data(), *e));
             return e;
         }
     }
 
     for (auto& mod : m_mods) {
-        spdlog::info("{:s}::on_config_load()", mod->get_name().data());
+        REVR_LOG(spdlog::info("{:s}::on_config_load()", mod->get_name().data()));
         mod->on_config_load(cfg);
     }
 
@@ -363,7 +367,7 @@ void Mods::on_pre_imgui_frame() const {
 
 void Mods::on_frame() const {
     for (auto& mod : m_mods) {
-#if defined(RE4)
+#if defined(RE4) && !REVR_RELEASE // [RELEASE SWITCH fix141] timed in the debug build only
         // [FRAMETIME-MESSUNG] s. RE4VR.hpp -- der ScriptRunner ist selbst ein
         // Mod und erscheint damit als eine Zeile fuer alle Lua-Dateien.
         re4vr::perf::Scope _p{mod->get_name(), "on_frame"};
@@ -371,20 +375,38 @@ void Mods::on_frame() const {
         mod->on_frame();
     }
 
-#if defined(RE4)
+#if defined(RE4) && !REVR_RELEASE // the release measures nothing
     // Frame abschliessen: Summen bilden, Buckel erkennen, ggf. mitschreiben.
     re4vr::perf::frame_end();
 #endif
 }
 
 void Mods::on_present() const {
+    // [CPU 03.11.2026] the render thread's frame ends here: the mods' time in the periodic log (cpustats::present) and,
+    // per mod, in the profiler's list
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] timed in the debug build only
+    const auto t0 = cpustats::now_ns();
+    cpustats::timeline().mark(cpustats::Ev::ModsPresentBegin);
+#endif
+
     for (auto& mod : m_mods) {
+#if defined(RE4) && !REVR_RELEASE
+        re4vr::perf::Scope _p{mod->get_name(), "early_present"};
+#endif
         mod->on_early_present();
     }
 
     for (auto& mod : m_mods) {
+#if defined(RE4) && !REVR_RELEASE
+        re4vr::perf::Scope _p{mod->get_name(), "present"};
+#endif
         mod->on_present();
     }
+
+#if !REVR_RELEASE
+    cpustats::present().mods_ns.fetch_add((uint64_t)(std::max)(cpustats::now_ns() - t0, (int64_t)0), std::memory_order_relaxed);
+    cpustats::timeline().mark(cpustats::Ev::ModsPresentEnd);
+#endif
 }
 
 void Mods::on_post_frame() const {
@@ -416,6 +438,11 @@ void Mods::draw_mod_options() const {
     // Das nackte Public-UI in fester Reihenfolge.
     if (const auto& menu = RE4VRMenu::get(); menu != nullptr) {
         menu->draw_public();
+    }
+#else
+    // [RESET VIEW 11.11.2026] the games without RE4's menu: view and position reset
+    if (const auto& vr = VR::get(); vr != nullptr) {
+        vr->draw_reset_view_button();
     }
 #endif
 }

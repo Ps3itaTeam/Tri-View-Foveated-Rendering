@@ -14,8 +14,54 @@
 #include "sdk/Application.hpp"
 
 #include "Hooks.hpp"
+#include "vr/CpuStats.hpp"
+
+#include <intrin.h> // _ReturnAddress [PROJECTION CALLERS 15.11.2026]
+#include "mods/vr/ReleaseBuild.hpp" // [RELEASE SWITCH fix140] REVR_RELEASE
 
 Hooks* g_hook = nullptr;
+
+namespace {
+// [CPU 28.10.2026] The camera matrix hooks run 200-500 times per frame (log of 27.10.2026), and each call went through
+// every mod twice (before and after the game's function) although only VR does anything there: ~45 x 2 virtual calls
+// per hook call. Only the mods that take part are called now (Mod::wants_camera_matrix_hooks); the mod list is complete
+// before the hooks are installed.
+const std::vector<Mod*>& camera_hook_mods() {
+    static const std::vector<Mod*> list = [] {
+        std::vector<Mod*> out{};
+
+        for (const auto& mod : g_framework->get_mods()->get_mods()) {
+            if (mod != nullptr && mod->wants_camera_matrix_hooks()) {
+                out.push_back(mod.get());
+            }
+        }
+
+        return out;
+    }();
+
+    return list;
+}
+
+// [CPU 03.11.2026] The same for the transform update hook: it runs for every transform the engine updates (thousands per
+// frame with many characters), and each call went through every mod twice; only FreeCam and the script runner (and
+// Camera / ManualFlashlight in other games) have anything in those callbacks (Mod::wants_transform_hooks).
+const std::vector<Mod*>& transform_hook_mods() {
+    static const std::vector<Mod*> list = [] {
+        std::vector<Mod*> out{};
+
+        for (const auto& mod : g_framework->get_mods()->get_mods()) {
+            if (mod != nullptr && mod->wants_transform_hooks()) {
+                out.push_back(mod.get());
+            }
+        }
+
+        REVR_LOG(spdlog::info("[Hooks] transform update hook: {} mod(s) take part", out.size()));
+        return out;
+    }();
+
+    return list;
+}
+}
 
 std::shared_ptr<Hooks>& Hooks::get() {
     static std::shared_ptr<Hooks> instance = std::make_shared<Hooks>();
@@ -36,7 +82,7 @@ std::optional<std::string> Hooks::on_initialize() {
     }
 
     for (auto hook : m_hook_list) {
-        spdlog::info("[Hooks] Entering hook...");
+        REVR_LOG(spdlog::info("[Hooks] Entering hook..."));
 
         auto result = hook();
 
@@ -46,12 +92,13 @@ std::optional<std::string> Hooks::on_initialize() {
         }
     }
 
-    spdlog::info("[Hooks] Finished hooking");
+    REVR_LOG(spdlog::info("[Hooks] Finished hooking"));
 
     return Mod::on_initialize();
 }
 
 void Hooks::on_draw_ui() {
+#if !REVR_RELEASE // [RELEASE SWITCH fix140] the profiler's page is a developer tool: none in the release
     if (!ImGui::CollapsingHeader("Performance")) {
         return;
     }
@@ -122,15 +169,20 @@ void Hooks::on_draw_ui() {
 
         ImGui::TreePop();
     }
+#endif
 }
 
-#define LAYER_HOOK_BODY(x, x2, x3) \
+// [TIMELINE 03.11.2026] code = which layer hook in the frame timeline: 0/1 scene update/draw, 2/3 post effect, 4/5 overlay,
+// 6/7 prepare output, 8/9 output
+#define LAYER_HOOK_BODY(x, x2, x3, code) \
 void Hooks::RenderLayerHook<sdk::renderer::layer::##x2##>::##x3##(sdk::renderer::layer::##x2##* layer, void* render_ctx) {\
     if (!g_framework->is_ready()) {\
         auto original_func = g_hook->m_layer_hooks.##x##.##x3##_hook->get_original<decltype(RenderLayerHook<sdk::renderer::layer::##x2##>::##x3##)>();\
         original_func(layer, render_ctx); \
         return; \
     } \
+    auto& tl = cpustats::timeline(); \
+    tl.mark(cpustats::Ev::LayerPre, (uint64_t)(uintptr_t)layer, code); \
     bool any_false = false; \
     const auto& mods = g_framework->get_mods()->get_mods(); \
     for (auto& mod : mods) { \
@@ -141,23 +193,26 @@ void Hooks::RenderLayerHook<sdk::renderer::layer::##x2##>::##x3##(sdk::renderer:
     } \
     if (!any_false) { \
         auto original_func = g_hook->m_layer_hooks.##x##.##x3##_hook->get_original<decltype(RenderLayerHook<sdk::renderer::layer::##x2##>::##x3##)>();\
+        tl.mark(cpustats::Ev::LayerCall, (uint64_t)(uintptr_t)layer, code); \
         original_func(layer, render_ctx); \
+        tl.mark(cpustats::Ev::LayerRet, (uint64_t)(uintptr_t)layer, code); \
     } \
     for (auto& mod : mods) { \
         mod->on_##x##_layer_##x3##(layer, render_ctx); \
     }\
+    tl.mark(cpustats::Ev::LayerPost, (uint64_t)(uintptr_t)layer, code); \
 }
 
-LAYER_HOOK_BODY(scene, Scene, update);
-LAYER_HOOK_BODY(scene, Scene, draw);
-LAYER_HOOK_BODY(post_effect, PostEffect, update);
-LAYER_HOOK_BODY(post_effect, PostEffect, draw);
-LAYER_HOOK_BODY(overlay, Overlay, update);
-LAYER_HOOK_BODY(overlay, Overlay, draw);
-LAYER_HOOK_BODY(prepare_output, PrepareOutput, update);
-LAYER_HOOK_BODY(prepare_output, PrepareOutput, draw);
-LAYER_HOOK_BODY(output, Output, update);
-LAYER_HOOK_BODY(output, Output, draw);
+LAYER_HOOK_BODY(scene, Scene, update, 0);
+LAYER_HOOK_BODY(scene, Scene, draw, 1);
+LAYER_HOOK_BODY(post_effect, PostEffect, update, 2);
+LAYER_HOOK_BODY(post_effect, PostEffect, draw, 3);
+LAYER_HOOK_BODY(overlay, Overlay, update, 4);
+LAYER_HOOK_BODY(overlay, Overlay, draw, 5);
+LAYER_HOOK_BODY(prepare_output, PrepareOutput, update, 6);
+LAYER_HOOK_BODY(prepare_output, PrepareOutput, draw, 7);
+LAYER_HOOK_BODY(output, Output, update, 8);
+LAYER_HOOK_BODY(output, Output, draw, 9);
 
 std::optional<std::string> Hooks::hook_update_transform() {
     auto game = g_framework->get_module().as<HMODULE>();
@@ -209,18 +264,18 @@ std::optional<std::string> Hooks::hook_update_transform() {
     }
 
     if (update_transform == 0) {
-        spdlog::error("Unable to find UpdateTransform pattern.");
+        REVR_LOG(spdlog::error("Unable to find UpdateTransform pattern."));
         return std::nullopt; // Allow it to continue anyways, it's not strictly necessary except for freecam
     }
 
-    spdlog::info("UpdateTransform: {:x}", update_transform);
+    REVR_LOG(spdlog::info("UpdateTransform: {:x}", update_transform));
 
     // Can be found by breakpointing RETransform's worldTransform
     m_update_transform_hook = std::make_unique<FunctionHook>(update_transform, &update_transform_hook);
 
     if (!m_update_transform_hook->create()) {
         //return "Failed to hook UpdateTransform";
-        spdlog::error("Failed to hook UpdateTransform");
+        REVR_LOG(spdlog::error("Failed to hook UpdateTransform"));
         return std::nullopt; // who cares
     }
 
@@ -249,7 +304,7 @@ std::optional<std::string> Hooks::hook_update_camera_controller() {
         return std::string{"Failed to find "} + game_namespace("camera.PlayerCameraController") + "::updateCameraPosition";
     }
 
-    spdlog::info("camera.PlayerCameraController.updateCameraPosition: {:x}", (uintptr_t)update_camera_controller);
+    REVR_LOG(spdlog::info("camera.PlayerCameraController.updateCameraPosition: {:x}", (uintptr_t)update_camera_controller));
 
     // Can be found by breakpointing camera controller's worldPosition
     m_update_camera_controller_hook = std::make_unique<FunctionHook>(update_camera_controller, &update_camera_controller_hook);
@@ -276,7 +331,7 @@ std::optional<std::string> Hooks::hook_update_camera_controller2() {
         return std::string{"Failed to find "} + game_namespace("camera.TwirlerCameraControllerRoot") + "::update";
     }
 
-    spdlog::info("camera.TwirlerCameraControllerRoot.update: {:x}", (uintptr_t)update_camera_controller2);
+    REVR_LOG(spdlog::info("camera.TwirlerCameraControllerRoot.update: {:x}", (uintptr_t)update_camera_controller2));
 
     // Can be found by breakpointing camera controller's worldRotation
     m_update_camera_controller2_hook = std::make_unique<FunctionHook>(update_camera_controller2, &update_camera_controller2_hook);
@@ -290,7 +345,7 @@ std::optional<std::string> Hooks::hook_update_camera_controller2() {
 }
 
 std::optional<std::string> Hooks::hook_gui_draw() {
-    spdlog::info("[Hooks] Attempting to hook GUI functions...");
+    REVR_LOG(spdlog::info("[Hooks] Attempting to hook GUI functions..."));
 
     auto game = g_framework->get_module().as<HMODULE>();
     auto application = sdk::Application::get();
@@ -310,11 +365,11 @@ std::optional<std::string> Hooks::hook_gui_draw() {
     *(_QWORD *)&v35 = draw_task_function; <-- "gui_draw_call" is found within this function.
     */
     size_t offset = 12;
-    spdlog::info("[Hooks] Scanning for first GUI draw call...");
+    REVR_LOG(spdlog::info("[Hooks] Scanning for first GUI draw call..."));
     auto gui_draw_call = utility::scan(game, "49 8B 0C CE 48 83 79 10 00 74 ? E8 ? ? ? ?");
 
     if (!gui_draw_call) {
-        spdlog::info("[Hooks] Scanning for fallback GUI draw call...");
+        REVR_LOG(spdlog::info("[Hooks] Scanning for fallback GUI draw call..."));
         // RE7 (+0x20 grabs the owner ptr, 0x10 in others)
         gui_draw_call = utility::scan(game, "49 8B 0C CE 48 83 79 20 00 74 ? E8 ? ? ? ?");
 
@@ -325,16 +380,16 @@ std::optional<std::string> Hooks::hook_gui_draw() {
 
             if (!gui_draw_call) {
                 //return "Unable to find gui_draw_call pattern.";
-                spdlog::error("[Hooks] Unable to find gui_draw_call pattern.");
+                REVR_LOG(spdlog::error("[Hooks] Unable to find gui_draw_call pattern."));
                 return std::nullopt; // Don't bother erroring out the entire mod just because of this
             }
         }
     }
 
-    spdlog::info("[Hooks] Found gui_draw_call at {:x}", *gui_draw_call);
+    REVR_LOG(spdlog::info("[Hooks] Found gui_draw_call at {:x}", *gui_draw_call));
 
     auto gui_draw = utility::calculate_absolute(*gui_draw_call + offset);
-    spdlog::info("[Hooks] gui_draw: {:x}", gui_draw);
+    REVR_LOG(spdlog::info("[Hooks] gui_draw: {:x}", gui_draw));
 
     m_gui_draw_hook = std::make_unique<FunctionHook>(gui_draw, &gui_draw_hook);
 
@@ -364,8 +419,8 @@ std::optional<std::string> Hooks::hook_application_entry(std::string name, std::
         return "via::Application::" + name + " is null";
     }
 
-    spdlog::info("{} entry: {:x}", name, (uintptr_t)entry);
-    spdlog::info("{}: {:x}", name, (uintptr_t)func - g_framework->get_module());
+    REVR_LOG(spdlog::info("{} entry: {:x}", name, (uintptr_t)entry));
+    REVR_LOG(spdlog::info("{}: {:x}", name, (uintptr_t)func - g_framework->get_module()));
 
     hook = std::make_unique<FunctionHook>(func, hook_fn);
 
@@ -373,13 +428,13 @@ std::optional<std::string> Hooks::hook_application_entry(std::string name, std::
         return "Failed to hook via::Application::" + name;
     }
     
-    spdlog::info("Hooked via::Application::{}", name);
+    REVR_LOG(spdlog::info("Hooked via::Application::{}", name));
 
     return std::nullopt;
 }
 
 std::optional<std::string> Hooks::hook_all_application_entries() {
-    spdlog::info("[Hooks] Attempting to application entries...");
+    REVR_LOG(spdlog::info("[Hooks] Attempting to application entries..."));
 
     auto application = sdk::Application::get();
 
@@ -387,7 +442,7 @@ std::optional<std::string> Hooks::hook_all_application_entries() {
         return "Failed to get via.Application";
     }
 
-    spdlog::info("[Hooks] Found via.Application at {:x}", (uintptr_t)application);
+    REVR_LOG(spdlog::info("[Hooks] Found via.Application at {:x}", (uintptr_t)application));
     
     auto generate_mov_rdx = [](uintptr_t target) {
         std::vector<uint8_t> mov_rdx{ 0x48, 0xBA, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
@@ -485,7 +540,7 @@ std::optional<std::string> Hooks::hook_all_application_entries() {
             continue;
         }*/
 
-        spdlog::info("{} {} entry: {:x}", i, entry->description, (uintptr_t)entry);
+        REVR_LOG(spdlog::info("{} {} entry: {:x}", i, entry->description, (uintptr_t)entry));
 
         auto generated_hook = generate_hook_func((const char*)entry->description, (uintptr_t)&global_application_entry_hook);
 
@@ -497,7 +552,7 @@ std::optional<std::string> Hooks::hook_all_application_entries() {
         m_application_entry_hooks[entry->description] = func;
         entry->func = (void (*)(void*))generated_hook;
 
-        spdlog::info("Hooked {} {:x}->{:x}", entry->description, (uintptr_t)func, (uintptr_t)generated_hook);
+        REVR_LOG(spdlog::info("Hooked {} {:x}->{:x}", entry->description, (uintptr_t)func, (uintptr_t)generated_hook));
     }
 
     /*for (auto& entry : m_application_entry_hooks) {
@@ -519,7 +574,7 @@ std::optional<std::string> Hooks::hook_update_before_lock_scene() {
         return "Unable to find via::render::EntityRenderer::updateBeforeLockScene";
     }
 
-    spdlog::info("updateBeforeLockScene: {:x}", (uintptr_t)update_before_lock_scene);
+    REVR_LOG(spdlog::info("updateBeforeLockScene: {:x}", (uintptr_t)update_before_lock_scene));
 
     m_update_before_lock_scene_hook = std::make_unique<FunctionHook>(update_before_lock_scene, &update_before_lock_scene_hook);
 
@@ -563,7 +618,7 @@ std::optional<std::string> Hooks::hook_lightshaft_draw() {
         return "Unable to get via::render::LightShaft::draw";
     }
 
-    spdlog::info("LightShaft::draw: {:x}", (uintptr_t)draw);
+    REVR_LOG(spdlog::info("LightShaft::draw: {:x}", (uintptr_t)draw));
 
     m_lightshaft_draw_hook = std::make_unique<FunctionHook>((uintptr_t)draw, (uintptr_t)&lightshaft_draw_hook);
 
@@ -584,7 +639,7 @@ std::optional<std::string> Hooks::hook_view_get_size() {
         return "Hook init failed: via.SceneView.get_Size function not found.";
     }
 
-    spdlog::info("via.SceneView.get_Size: {:x}", (uintptr_t)get_size_func);
+    REVR_LOG(spdlog::info("via.SceneView.get_Size: {:x}", (uintptr_t)get_size_func));
 
     // Pattern scan for the native function call
     //auto ref = utility::scan((uintptr_t)get_size_func, 0x100, "49 8B C8 E8");
@@ -625,7 +680,7 @@ std::optional<std::string> Hooks::hook_camera_get_projection_matrix() {
         return "Hook init failed: via.Camera.get_ProjectionMatrix function not found.";
     }
 
-    spdlog::info("via.Camera.get_ProjectionMatrix: {:x}", (uintptr_t)func);
+    REVR_LOG(spdlog::info("via.Camera.get_ProjectionMatrix: {:x}", (uintptr_t)func));
     
     // Pattern scan for the native function call
     auto ref = utility::find_pattern_in_path((uint8_t*)func, 1000, false, "49 8B C8 E8");
@@ -653,7 +708,7 @@ std::optional<std::string> Hooks::hook_camera_get_projection_matrix() {
         return "Hook init failed: via.Camera.get_ProjectionMatrix native function hook failed.";
     }
 
-    spdlog::info("Hooked via.Camera.get_ProjectionMatrix");
+    REVR_LOG(spdlog::info("Hooked via.Camera.get_ProjectionMatrix"));
 
     return std::nullopt;
 }
@@ -665,7 +720,7 @@ std::optional<std::string> Hooks::hook_camera_get_view_matrix() {
         return "Hook init failed: via.Camera.get_ViewMatrix function not found.";
     }
 
-    spdlog::info("via.Camera.get_ViewMatrix: {:x}", (uintptr_t)func);
+    REVR_LOG(spdlog::info("via.Camera.get_ViewMatrix: {:x}", (uintptr_t)func));
 
     // Pattern scan for the native function call
     auto ref = utility::find_pattern_in_path((uint8_t*)func, 1000, false, "49 8B C8 E8");
@@ -715,7 +770,7 @@ std::optional<std::string> Hooks::hook_render_layer(Hooks::RenderLayerHook<sdk::
         return std::string{"Hooks init failed: "} + hook.name + " vtable not found.";
     }
 
-    spdlog::info("{:s} vtable: {:x}", hook.name, (uintptr_t)obj_vtable - g_framework->get_module());
+    REVR_LOG(spdlog::info("{:s} vtable: {:x}", hook.name, (uintptr_t)obj_vtable - g_framework->get_module()));
 
     auto draw_native = obj_vtable[sdk::renderer::RenderLayer::DRAW_VTABLE_INDEX];
 
@@ -723,7 +778,7 @@ std::optional<std::string> Hooks::hook_render_layer(Hooks::RenderLayerHook<sdk::
         return std::string{"Hooks init failed: "} + hook.name + " draw native not found.";
     }
 
-    spdlog::info("{:s}.Draw: {:x}", hook.name, (uintptr_t)draw_native);
+    REVR_LOG(spdlog::info("{:s}.Draw: {:x}", hook.name, (uintptr_t)draw_native));
 
     // Set the first byte to the ret instruction
     //m_overlay_draw_patch = Patch::create(draw_native, { 0xC3 });
@@ -733,7 +788,7 @@ std::optional<std::string> Hooks::hook_render_layer(Hooks::RenderLayerHook<sdk::
             return std::string{"Hooks init failed: "} + hook.name + " draw native function hook failed.";
         }
     } else {
-        spdlog::info("Skipping draw hook for {:s}, stub code detected", hook.name);
+        REVR_LOG(spdlog::info("Skipping draw hook for {:s}, stub code detected", hook.name));
     }
 
     auto update_native = obj_vtable[sdk::renderer::RenderLayer::UPDATE_VTABLE_INDEX];
@@ -742,14 +797,14 @@ std::optional<std::string> Hooks::hook_render_layer(Hooks::RenderLayerHook<sdk::
         return std::string{"Hooks init failed: "} + hook.name + " update native not found.";
     }
 
-    spdlog::info("{:s}.Update: {:x}", hook.name, (uintptr_t)update_native);
+    REVR_LOG(spdlog::info("{:s}.Update: {:x}", hook.name, (uintptr_t)update_native));
 
     if (!utility::is_stub_code((uint8_t*)update_native)) {
         if (!hook.hook_update(update_native)) {
             return std::string{"Hooks init failed: "} + hook.name + " update native function hook failed.";
         }
     } else {
-        spdlog::info("Skipping update hook for {:s}, stub code detected", hook.name);
+        REVR_LOG(spdlog::info("Skipping update hook for {:s}, stub code detected", hook.name));
     }
 
     return std::nullopt;
@@ -760,16 +815,24 @@ void* Hooks::update_transform_hook_internal(RETransform* t, uint8_t a2, uint32_t
         return m_update_transform_hook->get_original<decltype(update_transform_hook)>()(t, a2, a3);
     }
 
-    auto& mods = g_framework->get_mods()->get_mods();
+    const auto& mods = transform_hook_mods();
 
-    for (auto& mod : mods) {
-        mod->on_pre_update_transform(t);
+    {
+        cpustats::HookTimer _m{cpustats::transform_hook()};
+
+        for (auto* mod : mods) {
+            mod->on_pre_update_transform(t);
+        }
     }
 
     auto ret = m_update_transform_hook->get_original<decltype(update_transform_hook)>()(t, a2, a3);
 
-    for (auto& mod : mods) {
-        mod->on_update_transform(t);
+    {
+        cpustats::HookTimer _m{cpustats::transform_hook(), false};
+
+        for (auto* mod : mods) {
+            mod->on_update_transform(t);
+        }
     }
 
     return ret;
@@ -836,6 +899,8 @@ void* Hooks::gui_draw_hook_internal(REComponent* gui_element, void* primitive_co
 
     auto& mods = g_framework->get_mods()->get_mods();
 
+#if REVR_RELEASE
+    // [RELEASE SWITCH fix141 23.11.2026] the same calls without the timing (calls and time for the debug log)
     bool any_false = false;
 
     for (auto& mod : mods) {
@@ -855,6 +920,79 @@ void* Hooks::gui_draw_hook_internal(REComponent* gui_element, void* primitive_co
     }
 
     return ret;
+#else
+    // [GUI 04.11.2026] calls and time of the mods' callbacks and of the game's draw (periodic log); while the frame timeline
+    // records, every element and each mod's callback that took over 1 us
+    auto& gh = cpustats::gui_hook();
+    auto& tl = cpustats::timeline();
+    const bool recording = tl.recording();
+    const auto t0 = cpustats::now_ns();
+    gh.calls.fetch_add(1);
+
+    if (recording) {
+        tl.mark(cpustats::Ev::GuiPre, (uint64_t)(uintptr_t)gui_element);
+    }
+
+    bool any_false = false;
+
+    for (size_t i = 0; i < mods.size(); ++i) {
+        auto& mod = mods[i];
+        const auto m0 = recording ? cpustats::now_ns() : 0;
+
+        if (!mod->on_pre_gui_draw_element(gui_element, primitive_context)) {
+            any_false = true;
+        }
+
+        if (recording) {
+            const auto dt = cpustats::now_ns() - m0;
+
+            if (dt > 1000) {
+                tl.mark(cpustats::Ev::GuiMod, ((uint64_t)i << 32) | (uint64_t)(uint32_t)(std::min)(dt, (int64_t)0xFFFFFFFF), 0);
+            }
+        }
+    }
+
+    void* ret = nullptr;
+    const auto t1 = cpustats::now_ns();
+
+    if (!any_false) {
+        if (recording) {
+            tl.mark(cpustats::Ev::GuiCall, (uint64_t)(uintptr_t)gui_element);
+        }
+
+        ret = original_func(gui_element, primitive_context);
+
+        if (recording) {
+            tl.mark(cpustats::Ev::GuiRet, (uint64_t)(uintptr_t)gui_element);
+        }
+    }
+
+    const auto t2 = cpustats::now_ns();
+
+    for (size_t i = 0; i < mods.size(); ++i) {
+        auto& mod = mods[i];
+        const auto m0 = recording ? cpustats::now_ns() : 0;
+        mod->on_gui_draw_element(gui_element, primitive_context);
+
+        if (recording) {
+            const auto dt = cpustats::now_ns() - m0;
+
+            if (dt > 1000) {
+                tl.mark(cpustats::Ev::GuiMod, ((uint64_t)i << 32) | (uint64_t)(uint32_t)(std::min)(dt, (int64_t)0xFFFFFFFF), 1);
+            }
+        }
+    }
+
+    const auto t3 = cpustats::now_ns();
+    gh.mods_ns.fetch_add((uint64_t)((t1 - t0) + (t3 - t2)));
+    gh.game_ns.fetch_add((uint64_t)(t2 - t1));
+
+    if (recording) {
+        tl.mark(cpustats::Ev::GuiPost, (uint64_t)(uintptr_t)gui_element);
+    }
+
+    return ret;
+#endif
 }
 
 void* Hooks::gui_draw_hook(REComponent* gui_element, void* primitive_context) {
@@ -909,6 +1047,37 @@ void Hooks::lightshaft_draw_hook(void* shaft, void* render_context) {
     g_hook->lightshaft_draw_hook_internal(shaft, render_context);
 }
 
+// [EARLY IMGUI 04.11.2026] REFramework's ImGui frame (with every mod's on_frame callback): at the start of WaitRendering when
+// cpustats::early_imgui_frame() is on (see there), otherwise, or when no WaitRendering came since the last frame, at the start
+// of BeginRendering as before. Main thread only.
+namespace {
+void run_imgui_frame_at_entry(size_t hash) {
+    static bool s_done_early = false;
+
+    const bool wait_rendering = hash == "WaitRendering"_fnv;
+    const bool begin_rendering = hash == "BeginRendering"_fnv;
+
+    if (!wait_rendering && !begin_rendering) {
+        return;
+    }
+
+    if (wait_rendering) {
+        if (!cpustats::early_imgui_frame().load(std::memory_order_relaxed) || s_done_early) {
+            return;
+        }
+
+        s_done_early = true;
+    } else if (std::exchange(s_done_early, false)) {
+        return; // this frame's ImGui frame already ran at WaitRendering
+    }
+
+    auto& tl = cpustats::timeline();
+    tl.mark(cpustats::Ev::ImguiBegin);
+    g_framework->run_imgui_frame(false);
+    tl.mark(cpustats::Ev::ImguiEnd);
+}
+} // namespace
+
 void Hooks::global_application_entry_hook_internal(void* entry, const char* name, size_t hash) {
     //spdlog::info("{}", name);
 
@@ -922,22 +1091,20 @@ void Hooks::global_application_entry_hook_internal(void* entry, const char* name
                                      (hash != 0x76b8100bec7c12c3 && hash != 0x9f63c0fc4eea6626) :
                                      true;
 
-    if (should_allow_ignore) {
-        std::shared_lock _{m_application_entry_data_mutex};
-
-        if (m_ignored_application_entries.contains(hash)) {
-            return;
-        }
+    if (should_allow_ignore && is_application_entry_ignored(hash)) {
+        return;
     }
 
     if (hash == "BeginRendering"_fnv) {
+        cpustats::main_round().fetch_add(1, std::memory_order_relaxed); // [HEAVY SLOT 04.11.2026]
+
 #if TDB_VER >= 73
     if (auto primitive_system = sdk::gui::renderer::PrimitiveSystem::get(); primitive_system != nullptr) {
         auto primitive_buffer = primitive_system->get_primitive_buffer();
         
         if (primitive_buffer != nullptr) {
             if (primitive_buffer->scratch.used >= primitive_buffer->scratch.size) {
-                spdlog::info("[GUI] Resizing scratch buffer from {} to {}", primitive_buffer->scratch.size, primitive_buffer->scratch.size * 2);
+                REVR_LOG(spdlog::info("[GUI] Resizing scratch buffer from {} to {}", primitive_buffer->scratch.size, primitive_buffer->scratch.size * 2));
                 primitive_buffer->scratch.resize(primitive_buffer->scratch.size * 2);
             }
         }
@@ -945,15 +1112,14 @@ void Hooks::global_application_entry_hook_internal(void* entry, const char* name
 #endif
     }
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] the profiler's branch (its page is not in the release)
     if (m_profiling_enabled) {
         Hooks::ApplicationEntryData profiler_entry{};
         
         auto now = std::chrono::high_resolution_clock::now();
         auto& mods = g_framework->get_mods()->get_mods();
 
-        if (hash == "BeginRendering"_fnv) {
-            g_framework->run_imgui_frame(false);
-        }
+        run_imgui_frame_at_entry(hash);
 
         for (auto& mod : mods) {
             mod->on_pre_application_entry(entry, name, hash);
@@ -977,26 +1143,53 @@ void Hooks::global_application_entry_hook_internal(void* entry, const char* name
         
         std::scoped_lock _{m_profiler_mutex};
         m_application_entry_times[name] = profiler_entry;
-    } else {
-        if (hash == "BeginRendering"_fnv) {
-            g_framework->run_imgui_frame(false);
-        }
+    } else
+#endif
+    {
+        // [TIMELINE 03.11.2026] the main thread's structure for the frame timeline (off: one load per mark)
+        auto& tl = cpustats::timeline();
+        tl.mark(cpustats::Ev::EntryPre, (uint64_t)(uintptr_t)name);
+
+        run_imgui_frame_at_entry(hash);
 
         auto& mods = g_framework->get_mods()->get_mods();
 
         // [FRAMETIME-MESSUNG] Pro MODUL, nicht pro Phase -- nur wenn im Tree
         // "RE4VR - Frametimes" eingeschaltet, sonst ein Vergleich pro Modul.
+        // RE4 only (RE4VR's measurement), and only in the debug build: the release measures nothing.
+#if defined(RE4) && !REVR_RELEASE
+        constexpr bool timed = true;
+#else
+        constexpr bool timed = false;
+#endif
+
         for (auto& mod : mods) {
-            re4vr::perf::Scope _p{mod->get_name(), name};
-            mod->on_pre_application_entry(entry, name, hash);
+            if (timed) {
+#if defined(RE4) && !REVR_RELEASE
+                re4vr::perf::Scope _p{mod->get_name(), name};
+#endif
+                mod->on_pre_application_entry(entry, name, hash);
+            } else {
+                mod->on_pre_application_entry(entry, name, hash);
+            }
         }
 
+        tl.mark(cpustats::Ev::EntryCall, (uint64_t)(uintptr_t)name);
         original(entry);
+        tl.mark(cpustats::Ev::EntryRet, (uint64_t)(uintptr_t)name);
 
         for (auto& mod : mods) {
-            re4vr::perf::Scope _p{mod->get_name(), name};
-            mod->on_application_entry(entry, name, hash);
+            if (timed) {
+#if defined(RE4) && !REVR_RELEASE
+                re4vr::perf::Scope _p{mod->get_name(), name};
+#endif
+                mod->on_application_entry(entry, name, hash);
+            } else {
+                mod->on_application_entry(entry, name, hash);
+            }
         }
+
+        tl.mark(cpustats::Ev::EntryPost, (uint64_t)(uintptr_t)name);
     }
 }
 
@@ -1027,40 +1220,61 @@ float* Hooks::view_get_size_hook(REManagedObject* scene_view, float* result) {
 }
 
 Matrix4x4f* Hooks::camera_get_projection_matrix_hook_internal(REManagedObject* camera, Matrix4x4f* result) {
-    const auto& mods = g_framework->get_mods()->get_mods();
+    const auto& mods = camera_hook_mods();
 
-    for (auto& mod : mods) {
-        mod->on_pre_camera_get_projection_matrix(camera, result);
+    {
+        for (auto& mod : mods) {
+            mod->on_pre_camera_get_projection_matrix(camera, result);
+        }
     }
 
     auto original = m_camera_get_projection_matrix_hook->get_original<decltype(camera_get_projection_matrix_hook)>();
 
     auto ret = original(camera, result);
 
-    for (auto& mod : mods) {
-        mod->on_camera_get_projection_matrix(camera, result);
+    {
+        for (auto& mod : mods) {
+            mod->on_camera_get_projection_matrix(camera, result);
+        }
     }
 
     return ret;
 }
 
+namespace {
+thread_local uintptr_t t_projection_caller = 0; // [PROJECTION CALLERS 15.11.2026]
+} // namespace
+
+uintptr_t Hooks::projection_caller() {
+    return t_projection_caller;
+}
+
 Matrix4x4f* Hooks::camera_get_projection_matrix_hook(REManagedObject* camera, Matrix4x4f* result) {
-    return g_hook->camera_get_projection_matrix_hook_internal(camera, result);
+    // [PROJECTION CALLERS 15.11.2026] the engine's call site for the mods (a call made inside this one keeps its own)
+    const auto outer = t_projection_caller;
+    t_projection_caller = (uintptr_t)_ReturnAddress();
+    auto ret = g_hook->camera_get_projection_matrix_hook_internal(camera, result);
+    t_projection_caller = outer;
+    return ret;
 }
 
 Matrix4x4f* Hooks::camera_get_view_matrix_hook_internal(REManagedObject* camera, Matrix4x4f* result) {
-    const auto& mods = g_framework->get_mods()->get_mods();
+    const auto& mods = camera_hook_mods();
 
-    for (auto& mod : mods) {
-        mod->on_pre_camera_get_view_matrix(camera, result);
+    {
+        for (auto& mod : mods) {
+            mod->on_pre_camera_get_view_matrix(camera, result);
+        }
     }
 
     auto original = m_camera_get_view_matrix_hook->get_original<decltype(camera_get_view_matrix_hook)>();
 
     auto ret = original(camera, result);
 
-    for (auto& mod : mods) {
-        mod->on_camera_get_view_matrix(camera, result);
+    {
+        for (auto& mod : mods) {
+            mod->on_camera_get_view_matrix(camera, result);
+        }
     }
 
     return ret;

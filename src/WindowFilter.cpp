@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <spdlog/spdlog.h>
 
 #include "WindowFilter.hpp"
@@ -31,7 +32,7 @@ WindowFilter::WindowFilter() {
             for (const auto hwnd : m_window_jobs) {
                 char window_name[256]{};
                 if (GetWindowTextA(hwnd, window_name, sizeof(window_name)) != 0) {
-                    spdlog::info("[WindowFilter] Encountered new window: {}", window_name);
+                    REVR_LOG(spdlog::info("[WindowFilter] Encountered new window: {}", window_name));
                 }
 
                 if (is_filtered_nocache(hwnd)) {

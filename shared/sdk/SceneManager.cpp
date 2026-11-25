@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <spdlog/spdlog.h>
 
 #include "RETypeDB.hpp"
@@ -8,7 +9,7 @@ void* get_scene_manager() {
     static auto scene_manager_type = sdk::find_type_definition("via.SceneManager");
 
     if (scene_manager_type == nullptr) {
-        spdlog::error("Cannot find via.SceneManager");
+        REVR_LOG(spdlog::error("Cannot find via.SceneManager"));
         return nullptr;
     }
 

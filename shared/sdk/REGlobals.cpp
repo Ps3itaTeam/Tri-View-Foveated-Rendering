@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <algorithm>
 
 #include <spdlog/spdlog.h>
@@ -19,7 +20,7 @@ std::unique_ptr<REGlobals>& get_globals() {
 }
 
 REGlobals::REGlobals() {
-    spdlog::info("REGlobals initialization");
+    REVR_LOG(spdlog::info("REGlobals initialization"));
 
     m_object_list.reserve(2048);
 
@@ -29,8 +30,8 @@ REGlobals::REGlobals() {
 
     end -= 0x1000;
 
-    spdlog::info("start: {:x}", start);
-    spdlog::info("end: {:x}", end);
+    REVR_LOG(spdlog::info("start: {:x}", start));
+    REVR_LOG(spdlog::info("end: {:x}", end));
 
     // generic pattern used for all these globals
     auto pat = std::string{ "48 8D ? ? ? ? ? 48 B8 00 00 00 00 00 00 00 80" };
@@ -67,7 +68,7 @@ REGlobals::REGlobals() {
 
     // Create a list of getter functions instead
     if (m_objects.empty()) {
-        spdlog::info("Usual pattern for REGlobals not working, falling back to scanning for SingletonBehavior types");
+        REVR_LOG(spdlog::info("Usual pattern for REGlobals not working, falling back to scanning for SingletonBehavior types"));
 
         auto& types = reframework::get_types();
         auto& type_list = types->get_types();
@@ -85,7 +86,7 @@ REGlobals::REGlobals() {
                 const auto type_definition = utility::re_type::get_type_definition(t);
 
                 if (type_definition == nullptr) {
-                    spdlog::info("Failed to get type definition for {}", name);
+                    REVR_LOG(spdlog::info("Failed to get type definition for {}", name));
                     continue;
                 }
 
@@ -101,7 +102,7 @@ REGlobals::REGlobals() {
                 auto type_name = name.substr(name.find("`1<") + 3, name.find(">") - name.find("`1<") - 3);
 
                 if (i++ < 100) {
-                    spdlog::info("{}", type_name);
+                    REVR_LOG(spdlog::info("{}", type_name));
                 }
 
                 m_getters[type_name] = getter;
@@ -109,10 +110,10 @@ REGlobals::REGlobals() {
         }
     }
 
-    spdlog::info("Found {} REGlobals", m_object_list.size());
-    spdlog::info("Found {} getters", m_getters.size());
+    REVR_LOG(spdlog::info("Found {} REGlobals", m_object_list.size()));
+    REVR_LOG(spdlog::info("Found {} getters", m_getters.size()));
 
-    spdlog::info("Finished REGlobals initialization");
+    REVR_LOG(spdlog::info("Finished REGlobals initialization"));
 }
 
 std::unordered_set<REManagedObject*> REGlobals::get_objects() {
@@ -256,7 +257,7 @@ void REGlobals::refresh_map() {
 
         if (m_acknowledged_objects.find(obj_ptr) == m_acknowledged_objects.end()) {
 #ifdef DEVELOPER
-            spdlog::info("{:x}->{:x} ({:s})", (uintptr_t)obj_ptr, (uintptr_t)*obj_ptr, t->name);
+            REVR_LOG(spdlog::info("{:x}->{:x} ({:s})", (uintptr_t)obj_ptr, (uintptr_t)*obj_ptr, t->name));
 #endif
             m_acknowledged_objects.insert(obj_ptr);
         }

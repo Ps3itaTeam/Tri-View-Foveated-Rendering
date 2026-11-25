@@ -103,7 +103,8 @@ struct PostPass {
     bool dispatch_inplace(ID3D12Device* device, ID3D12GraphicsCommandList* cmd,
                           ID3D12Resource* src, D3D12_RESOURCE_STATES src_state,
                           float sharpness, float saturation,
-                          float brightness = 1.0f, float contrast = 1.0f);   // [28.09.2026] 1 = unveraendert
+                          float brightness = 1.0f, float contrast = 1.0f,    // [28.09.2026] 1 = unveraendert
+                          float edge_soften = 0.0f, float edge_threshold = 0.15f); // [EDGE SOFTEN 11.11.2026] 0 = off
 
     void reset();
 
@@ -232,3 +233,31 @@ private:
     std::array<DXGI_FORMAT, 2> m_target_fmt{DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_UNKNOWN};
 };
 }
+
+namespace d3d12 {
+// [LONG EDGES 11.11.2026] Anti-aliasing along edges (the FXAA 3.11 quality search): where the luma of a pixel and its
+// neighbours spans an edge, the edge's direction is found, its run is followed in both directions (up to about 30 px)
+// and the pixel is moved across the edge by how far it lies along the run. Long, nearly horizontal or vertical lines
+// (bars, frames, metal edges) get even steps instead of stairs; flat areas and fine texture stay as they are.
+// src (display-encoded colour, any SRV-able format, in src_state, left in it) -> dst (same size, UAV-able, resting in
+// UNORDERED_ACCESS). strength 0..1: how much of the result is taken (0 = a plain copy).
+struct LongEdgePass {
+    bool dispatch(ID3D12Device* device, ID3D12GraphicsCommandList* cmd, ID3D12Resource* src, D3D12_RESOURCE_STATES src_state,
+        ID3D12Resource* dst, float strength);
+    void reset();
+    const char* last_error() const { return m_last_error; }
+
+private:
+    static constexpr uint32_t RING_COUNT = 16;
+
+    bool setup(ID3D12Device* device);
+
+    Microsoft::WRL::ComPtr<ID3D12RootSignature> m_root_sig{};
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> m_pso{};
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> m_heap{};
+    uint32_t m_descriptor_size{0};
+    uint32_t m_ring{0};
+    bool m_failed{false};
+    const char* m_last_error{""};
+};
+} // namespace d3d12

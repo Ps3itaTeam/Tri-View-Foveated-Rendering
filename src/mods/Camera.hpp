@@ -71,6 +71,9 @@ public:
     // Drawn bare in the main REFramework menu (the "Camera" tree itself stays hidden).
     bool draw_vignette_toggle();
 
+#ifdef RE8
+    bool wants_transform_hooks() const override { return true; } // [CPU 03.11.2026] its transform callback only works in RE8
+#endif
     void on_update_transform(RETransform* transform);
     void on_pre_application_entry(void* entry, const char* name, size_t hash) override;
     void on_application_entry(void* entry, const char* name, size_t hash) override;

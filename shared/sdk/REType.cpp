@@ -1,6 +1,8 @@
+#include <memory>
 #include <shared_mutex>
 
 #include "ReClass.hpp"
+#include "NameCache.hpp"
 
 #include "RETypeDefinition.hpp"
 #include "REType.hpp"
@@ -86,7 +88,36 @@ void* utility::re_type::create_instance(::REType* t) {
 static std::shared_mutex insertion_mutex{};
 static std::unordered_map<std::string, VariableDescriptor*> var_map{};
 
+namespace {
+VariableDescriptor* get_field_desc_uncached(::REType* t, std::string_view field);
+FunctionDescriptor* get_method_desc_uncached(::REType* t, std::string_view name);
+} // namespace
+
+// [CPU 04.11.2026] the lookups below behind a per-thread front (see NameCache.hpp). They build "Type.name" as a new string
+// and take a shared lock for every call; a name they do not find is searched again each time, so "not found" is not
+// kept here either.
 VariableDescriptor* utility::re_type::get_field_desc(::REType* t, std::string_view field) {
+    if (t == nullptr) {
+        return nullptr;
+    }
+
+    thread_local const auto t_front = std::make_unique<sdk::namecache::Table<VariableDescriptor*, 256>>();
+
+    return t_front->get(t, field, [&]() { return get_field_desc_uncached(t, field); }, false);
+}
+
+FunctionDescriptor* utility::re_type::get_method_desc(::REType* t, std::string_view name) {
+    if (t == nullptr) {
+        return nullptr;
+    }
+
+    thread_local const auto t_front = std::make_unique<sdk::namecache::Table<FunctionDescriptor*, 256>>();
+
+    return t_front->get(t, name, [&]() { return get_method_desc_uncached(t, name); }, false);
+}
+
+namespace {
+VariableDescriptor* get_field_desc_uncached(::REType* t, std::string_view field) {
     if (t == nullptr) {
         return nullptr;
     }
@@ -102,7 +133,7 @@ VariableDescriptor* utility::re_type::get_field_desc(::REType* t, std::string_vi
     }
 
     for (; t != nullptr; t = t->super) {
-        auto vars = get_variables(t);
+        auto vars = utility::re_type::get_variables(t);
 
         if (vars == nullptr) {
             continue;
@@ -125,6 +156,7 @@ VariableDescriptor* utility::re_type::get_field_desc(::REType* t, std::string_vi
 
     return nullptr;
 }
+} // namespace
 
 REVariableList* utility::re_type::get_variables(::REType* t) {
     if (t == nullptr || t->fields == nullptr || t->fields->variables == nullptr) {
@@ -143,7 +175,8 @@ REVariableList* utility::re_type::get_variables(::REType* t) {
 static std::shared_mutex method_insertion_mutex{};
 static std::unordered_map<std::string, FunctionDescriptor*> method_map{};
 
-FunctionDescriptor* utility::re_type::get_method_desc(::REType* t, std::string_view name) {
+namespace {
+FunctionDescriptor* get_method_desc_uncached(::REType* t, std::string_view name) {
     if (t == nullptr) {
         return nullptr;
     }
@@ -190,4 +223,5 @@ FunctionDescriptor* utility::re_type::get_method_desc(::REType* t, std::string_v
 
     return nullptr;
 }
+} // namespace
 

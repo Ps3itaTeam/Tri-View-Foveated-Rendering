@@ -1,3 +1,6 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
+#include <exception>
+
 #include <utility/String.hpp>
 
 #include <spdlog/spdlog.h>
@@ -7,7 +10,7 @@
 
 namespace d3d12 {
 bool TextureContext::setup(ID3D12Device* device, ID3D12Resource* rsrc, std::optional<DXGI_FORMAT> rtv_format, std::optional<DXGI_FORMAT> srv_format, const wchar_t* name) {
-    spdlog::info("Setting up texture context for {}", utility::narrow(name));
+    REVR_LOG(spdlog::info("Setting up texture context for {}", utility::narrow(name)));
     
     reset();
 
@@ -24,7 +27,7 @@ bool TextureContext::setup(ID3D12Device* device, ID3D12Resource* rsrc, std::opti
 }
 
 bool TextureContext::create_rtv(ID3D12Device* device, std::optional<DXGI_FORMAT> format) {
-    spdlog::info("Creating RTV for texture context");
+    REVR_LOG(spdlog::info("Creating RTV for texture context"));
 
     rtv_heap.reset();
 
@@ -34,8 +37,12 @@ bool TextureContext::create_rtv(ID3D12Device* device, std::optional<DXGI_FORMAT>
             D3D12_DESCRIPTOR_HEAP_TYPE_RTV,
             D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
             1);
+    } catch(const std::exception& e) {
+        // [27.10.2026] with the reason: a creation that fails because the device was removed says so here
+        REVR_LOG(spdlog::error("Failed to create RTV descriptor heap: {} (device removed reason {:#x})", e.what(), (uint32_t)device->GetDeviceRemovedReason()));
+        return false;
     } catch(...) {
-        spdlog::error("Failed to create RTV descriptor heap");
+        REVR_LOG(spdlog::error("Failed to create RTV descriptor heap"));
         return false;
     }
 
@@ -58,7 +65,7 @@ bool TextureContext::create_rtv(ID3D12Device* device, std::optional<DXGI_FORMAT>
 }
 
 bool TextureContext::create_srv(ID3D12Device* device, std::optional<DXGI_FORMAT> format) {
-    spdlog::info("Creating SRV for texture context");
+    REVR_LOG(spdlog::info("Creating SRV for texture context"));
 
     srv_heap.reset();
 
@@ -68,8 +75,11 @@ bool TextureContext::create_srv(ID3D12Device* device, std::optional<DXGI_FORMAT>
             D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
             D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
             1);
+    } catch(const std::exception& e) {
+        REVR_LOG(spdlog::error("Failed to create SRV descriptor heap: {} (device removed reason {:#x})", e.what(), (uint32_t)device->GetDeviceRemovedReason()));
+        return false;
     } catch(...) {
-        spdlog::error("Failed to create SRV descriptor heap");
+        REVR_LOG(spdlog::error("Failed to create SRV descriptor heap"));
         return false;
     }
 

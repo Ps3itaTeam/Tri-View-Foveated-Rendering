@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <sdk/Application.hpp>
 #include "sdk/REMath.hpp"
 #include "sdk/SceneManager.hpp"
@@ -105,7 +106,7 @@ void FreeCam::on_update_transform(RETransform* transform) {
     }
 
     if (!update_pointers()) {
-        spdlog::error("FreeCam: Failed to update pointers");
+        REVR_LOG(spdlog::error("FreeCam: Failed to update pointers"));
         m_was_disabled = false;
         return;
     }

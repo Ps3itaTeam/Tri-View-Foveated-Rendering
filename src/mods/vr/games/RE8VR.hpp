@@ -1,6 +1,8 @@
 // Even though this is called RE8VR, it also affects RE7.
 #pragma once
 
+#include <atomic> // [HEIGHT PROBE 12.11.2026]
+
 #if defined(RE7) || defined(RE8)
 #include <chrono>
 #include <sdk/REMath.hpp>
@@ -12,6 +14,21 @@
 class RE8VR : public Mod {
 public:
     static std::shared_ptr<RE8VR>& get();
+
+    // [HEIGHT PROBE 12.11.2026] the camera heights fix_player_camera saw last (VR::height_probe_text)
+    struct CameraProbe {
+        std::atomic<uint32_t> calls{0};
+        std::atomic<float> pre_y{0.0f};
+        std::atomic<float> post_y{0.0f};
+        std::atomic<bool> offset_applied{false};
+        std::atomic<bool> controllable{false};
+        std::atomic<bool> cutscene{false};
+    };
+
+    static CameraProbe& camera_probe() {
+        static CameraProbe probe{};
+        return probe;
+    }
 
     std::string_view get_name() const override {
         return "RE8VR";

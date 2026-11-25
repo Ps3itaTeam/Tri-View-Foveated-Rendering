@@ -1,0 +1,13 @@
+{"kinds": ["still", "tremor", "pan"],
+ "variants": {
+  "mod_078": [8, "old", {"feedback": 0.78}],
+  "A": [32, "new", {"scale": 2}],
+  "A_nofollow": [32, "new", {"scale": 2, "follow": false}],
+  "A_noprotect": [32, "new", {"scale": 2, "protect": false}],
+  "A_range1": [32, "new", {"scale": 2, "af_relax": 1.0}],
+  "A_w8": [32, "new", {"scale": 2, "w_max": 8.0}],
+  "A_w3": [32, "new", {"scale": 2, "w_max": 3.0}],
+  "A_clip125": [32, "new", {"scale": 2, "clip_gamma": 1.25}],
+  "A_sooner": [32, "new", {"scale": 2, "fl_k": 1.0, "fl_b0": 0.01, "fl_kc": 0.75, "fl_b0c": 0.006}],
+  "A_s1": [8, "new", {"scale": 1, "sigma": 0.35}]
+ }}

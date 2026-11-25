@@ -17,6 +17,7 @@ extern "C" {
 #include "mods/IntegrityCheckBypass.hpp"
 #include "ExceptionHandler.hpp"
 #include "REFramework.hpp"
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE
 
 HMODULE g_dinput = 0;
 std::mutex g_load_mutex{};
@@ -67,7 +68,7 @@ void startup_thread(HMODULE reframework_module) {
     // every now and then because it gets replaced
     reframework::setup_exception_handler();
 
-#ifndef NDEBUG
+#if !defined(NDEBUG) && !REVR_RELEASE // [RELEASE SWITCH fix141] the console: debug build only
     AllocConsole();
     freopen("CONIN$", "r", stdin);
     freopen("CONOUT$", "w", stdout);

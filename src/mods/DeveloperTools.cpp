@@ -1,3 +1,5 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] the developer tools: debug build only (Mods.cpp makes them only there)
 #include <imgui.h>
 
 #include "tools/GameObjectsDisplay.hpp"
@@ -27,3 +29,4 @@ void DeveloperTools::on_draw_ui() {
     }
 }
 
+#endif // !REVR_RELEASE

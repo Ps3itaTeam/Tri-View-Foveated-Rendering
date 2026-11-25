@@ -1,3 +1,12 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
+#include <array>
+#include <atomic>
+#include <filesystem>
+#include <string_view>
+#include <string>
+#include <fstream>
+#include <mutex>
+#include <unordered_map>
 #include <thread>
 #include <future>
 #include <unordered_set>
@@ -21,13 +30,397 @@
 static D3D12Hook* g_d3d12_hook = nullptr;
 thread_local bool g_inside_d3d12_hook = false;
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] the crash report (DRED): debug build only
+// [DRED 14.11.2026] see D3D12Hook.hpp
+namespace d3d12_dred {
+// [DRED 14.11.2026 second try] the first try set DRED once at start and let the settings interface go: the game's device came
+// 0.3 s later without it (breadcrumbs "unsupported" after the device removed of 14.11.2026 15:30). Now the interface stays,
+// and D3D12CreateDevice is hooked to switch DRED on again right before each device is made (the game may change the
+// settings itself in between).
+static Microsoft::WRL::ComPtr<ID3D12DeviceRemovedExtendedDataSettings1> s_settings1{};
+static Microsoft::WRL::ComPtr<ID3D12DeviceRemovedExtendedDataSettings> s_settings{};
+static std::unique_ptr<FunctionHook> s_create_device_hook{};
+static std::atomic<uint32_t> s_devices_made{0};
+static std::array<std::atomic<uintptr_t>, 8> s_device_ptrs{};
+
+static void force_on() {
+    if (s_settings1 != nullptr) {
+        s_settings1->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+        s_settings1->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+        s_settings1->SetBreadcrumbContextEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+    } else if (s_settings != nullptr) {
+        s_settings->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+        s_settings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+    }
+}
+
+static HRESULT WINAPI create_device_hook(IUnknown* adapter, D3D_FEATURE_LEVEL level, REFIID riid, void** device) {
+    force_on();
+
+    const auto original = s_create_device_hook->get_original<std::remove_pointer_t<PFN_D3D12_CREATE_DEVICE>>();
+    const auto hr = original(adapter, level, riid, device);
+    const auto made = device != nullptr && SUCCEEDED(hr) ? (uintptr_t)*device : 0;
+
+    if (made != 0) {
+        const auto n = s_devices_made.fetch_add(1);
+        s_device_ptrs[n % s_device_ptrs.size()] = made;
+        REVR_LOG(spdlog::info("[DRED] D3D12CreateDevice #{}: device 0x{:x}, DRED switched on right before it", n + 1, made));
+    }
+
+    return hr;
+}
+
+// [DRED fix103 20.11.2026] see D3D12Hook.hpp
+bool wanted(const std::filesystem::path& config_file) {
+    static constexpr std::string_view KEY{"FoveatedRendering_DebugDeviceRemovedData="};
+    std::ifstream in{config_file};
+    std::string line{};
+
+    while (in && std::getline(in, line)) {
+        const auto first = line.find_first_not_of(" \t");
+
+        if (first == std::string::npos || line.compare(first, KEY.size(), KEY) != 0) {
+            continue;
+        }
+
+        const auto value = line.substr(first + KEY.size());
+        return value.starts_with("true") || value.starts_with("1");
+    }
+
+    return false;
+}
+
+bool active() {
+    return s_settings1 != nullptr || s_settings != nullptr;
+}
+
+void enable() {
+    using GetDebugInterfaceFn = HRESULT(WINAPI*)(REFIID, void**);
+
+    // the setting applies to devices made after it: d3d12.dll already in the process means the game may have its device
+    const bool already_loaded = GetModuleHandleW(L"d3d12.dll") != nullptr;
+    const auto module = LoadLibraryW(L"d3d12.dll");
+    const auto get_debug_interface = module != nullptr ? (GetDebugInterfaceFn)GetProcAddress(module, "D3D12GetDebugInterface") : nullptr;
+    const auto create_device = module != nullptr ? GetProcAddress(module, "D3D12CreateDevice") : nullptr;
+
+    if (get_debug_interface == nullptr) {
+        REVR_LOG(spdlog::warn("[DRED] D3D12GetDebugInterface not found: no device removed data"));
+        return;
+    }
+
+    if (FAILED(get_debug_interface(__uuidof(ID3D12DeviceRemovedExtendedDataSettings1), (void**)s_settings1.GetAddressOf()))) {
+        s_settings1.Reset();
+
+        if (FAILED(get_debug_interface(__uuidof(ID3D12DeviceRemovedExtendedDataSettings), (void**)s_settings.GetAddressOf()))) {
+            s_settings.Reset();
+            REVR_LOG(spdlog::warn("[DRED] settings interface not available: no device removed data"));
+            return;
+        }
+    }
+
+    force_on();
+
+    bool hooked = false;
+
+    if (create_device != nullptr) {
+        s_create_device_hook = std::make_unique<FunctionHook>((uintptr_t)create_device, (uintptr_t)&create_device_hook);
+        hooked = s_create_device_hook->create();
+    }
+
+    REVR_LOG(spdlog::info("[DRED] breadcrumbs and page fault data on (settings version {}), D3D12CreateDevice {}{}", s_settings1 != nullptr ? 2 : 1,
+        hooked ? "hooked" : "NOT hooked", already_loaded ? " (d3d12.dll was loaded already: the game's device may be without it)" : ""));
+}
+
+// [DRED 14.11.2026 third step] DRED names the list the GPU stopped in only if its maker named it (the game, SteamVR and the
+// plugins do not). The queue class's ExecuteCommandLists is hooked once the game's queue is known: for every list it keeps
+// the module that submitted it (the caller), the queue type, the thread and the submit's number, read back by log().
+using ExecuteFn = void(STDMETHODCALLTYPE*)(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*);
+
+struct ListOwner {
+    std::string module{};
+    uint32_t thread{};
+    uint32_t queue_type{};
+    uint64_t submit{};
+};
+
+static std::mutex s_owner_mtx{};
+static std::unordered_map<const void*, ListOwner> s_owners{};
+static std::unordered_map<const void*, std::string> s_caller_modules{};
+static std::atomic<ExecuteFn> s_execute_original{nullptr};
+static std::unique_ptr<PointerHook> s_execute_hook{};
+static std::atomic<uint64_t> s_submits{0};
+
+static std::string module_of(const void* address) {
+    HMODULE module{};
+
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)address, &module) &&
+        module != nullptr) {
+        wchar_t path[MAX_PATH]{};
+
+        if (GetModuleFileNameW(module, path, MAX_PATH) > 0) {
+            return utility::narrow(std::filesystem::path{path}.filename().wstring());
+        }
+    }
+
+    return std::format("? (0x{:x})", (uintptr_t)address);
+}
+
+static void STDMETHODCALLTYPE execute_hook(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* lists) {
+    const void* caller = _ReturnAddress();
+
+    if (queue != nullptr && lists != nullptr && count > 0) {
+        const auto submit = s_submits.fetch_add(1, std::memory_order_relaxed) + 1;
+        const auto type = (uint32_t)queue->GetDesc().Type;
+        std::scoped_lock _{s_owner_mtx};
+        auto it = s_caller_modules.find(caller);
+
+        if (it == s_caller_modules.end()) {
+            it = s_caller_modules.emplace(caller, module_of(caller)).first;
+        }
+
+        if (s_owners.size() > 8192) {
+            s_owners.clear(); // the lists are reused frame after frame; a bound in case some are not
+        }
+
+        for (UINT i = 0; i < count; ++i) {
+            if (lists[i] != nullptr) {
+                auto& o = s_owners[lists[i]];
+                o.module = it->second;
+                o.thread = GetCurrentThreadId();
+                o.queue_type = type;
+                o.submit = submit;
+            }
+        }
+    }
+
+    s_execute_original.load(std::memory_order_acquire)(queue, count, lists);
+}
+
+void watch_queue(ID3D12CommandQueue* queue) {
+    if (queue == nullptr || s_execute_hook != nullptr || (s_settings1 == nullptr && s_settings == nullptr)) {
+        return;
+    }
+
+    auto vtable = *(void***)queue;
+    constexpr size_t EXECUTE_INDEX = 10; // IUnknown 3, ID3D12Object 4, ID3D12DeviceChild 1, UpdateTileMappings, CopyTileMappings
+    s_execute_original.store((ExecuteFn)vtable[EXECUTE_INDEX], std::memory_order_release);
+
+    try {
+        s_execute_hook = std::make_unique<PointerHook>(&vtable[EXECUTE_INDEX], (void*)&execute_hook);
+        REVR_LOG(spdlog::info("[DRED] the queue class's ExecuteCommandLists hooked: the module that submits each command list is kept"));
+    } catch (const std::exception& e) {
+        s_execute_hook.reset();
+        REVR_LOG(spdlog::warn("[DRED] ExecuteCommandLists could not be hooked: {}", e.what()));
+    }
+}
+
+static std::string owner_of(const void* list) {
+    std::scoped_lock _{s_owner_mtx};
+    const auto it = s_owners.find(list);
+
+    if (it == s_owners.end()) {
+        return "submitted by ?";
+    }
+
+    static constexpr const char* types[] = {"direct", "bundle", "compute", "copy"};
+    const auto& o = it->second;
+    return std::format("submitted by {} (queue {}, thread {}, submit #{} of {})", o.module, o.queue_type < 4 ? types[o.queue_type] : "other",
+        o.thread, o.submit, s_submits.load());
+}
+
+static const char* op_name(D3D12_AUTO_BREADCRUMB_OP op) {
+    static constexpr const char* names[] = {"SetMarker", "BeginEvent", "EndEvent", "DrawInstanced", "DrawIndexedInstanced", "ExecuteIndirect",
+        "Dispatch", "CopyBufferRegion", "CopyTextureRegion", "CopyResource", "CopyTiles", "ResolveSubresource", "ClearRTV", "ClearUAV",
+        "ClearDSV", "ResourceBarrier", "ExecuteBundle", "Present", "ResolveQueryData", "BeginSubmission", "EndSubmission", "DecodeFrame",
+        "ProcessFrames", "AtomicCopyBufferUint", "AtomicCopyBufferUint64", "ResolveSubresourceRegion", "WriteBufferImmediate",
+        "DecodeFrame1", "SetProtectedResourceSession", "DecodeFrame2", "ProcessFrames1", "BuildRaytracingAS", "EmitRaytracingASPostbuildInfo",
+        "CopyRaytracingAS", "DispatchRays", "InitializeMetaCommand", "ExecuteMetaCommand", "EstimateMotion", "ResolveMotionVectorHeap",
+        "SetPipelineState1", "InitializeExtensionCommand", "ExecuteExtensionCommand", "DispatchMesh", "EncodeFrame",
+        "ResolveEncoderOutputMetadata", "Barrier", "BeginCommandList", "DispatchGraph", "SetProgram"};
+    const auto i = (size_t)op;
+    return i < std::size(names) ? names[i] : "?";
+}
+
+static std::string name_of(const char* a, const wchar_t* w) {
+    if (w != nullptr) {
+        return utility::narrow(w);
+    }
+
+    return a != nullptr ? std::string{a} : std::string{"(no name)"};
+}
+
+void log(ID3D12Device* device) try {
+    if (device == nullptr) {
+        return;
+    }
+
+    bool through_hook = false;
+
+    for (const auto& p : s_device_ptrs) {
+        through_hook |= p.load() == (uintptr_t)device;
+    }
+
+    REVR_LOG(spdlog::error("[DRED] removed device 0x{:x}: made through the hooked D3D12CreateDevice {} ({} device(s) made through it)", (uintptr_t)device,
+        through_hook ? "yes" : "no", s_devices_made.load()));
+
+    Microsoft::WRL::ComPtr<ID3D12DeviceRemovedExtendedData1> dred{};
+
+    if (FAILED(device->QueryInterface(__uuidof(ID3D12DeviceRemovedExtendedData1), (void**)dred.GetAddressOf())) || dred == nullptr) {
+        REVR_LOG(spdlog::error("[DRED] no device removed data on this device"));
+        return;
+    }
+
+    D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 crumbs{};
+
+    if (const auto hr = dred->GetAutoBreadcrumbsOutput1(&crumbs); FAILED(hr)) {
+        REVR_LOG(spdlog::error("[DRED] no breadcrumbs ({:x}): DRED was not on when the device was made", (uint32_t)hr));
+
+        // the first version's output, in case only that one is kept
+        Microsoft::WRL::ComPtr<ID3D12DeviceRemovedExtendedData> dred0{};
+        D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT crumbs0{};
+
+        if (SUCCEEDED(device->QueryInterface(__uuidof(ID3D12DeviceRemovedExtendedData), (void**)dred0.GetAddressOf())) && dred0 != nullptr &&
+            SUCCEEDED(dred0->GetAutoBreadcrumbsOutput(&crumbs0))) {
+            for (auto node = crumbs0.pHeadAutoBreadcrumbNode; node != nullptr; node = node->pNext) {
+                const uint32_t done = node->pLastBreadcrumbValue != nullptr ? *node->pLastBreadcrumbValue : 0;
+
+                if (done < node->BreadcrumbCount) {
+                    REVR_LOG(spdlog::error("[DRED] (v1) list \"{}\" on queue \"{}\": {} of {} operations done, next {}",
+                        name_of(node->pCommandListDebugNameA, node->pCommandListDebugNameW),
+                        name_of(node->pCommandQueueDebugNameA, node->pCommandQueueDebugNameW), done, node->BreadcrumbCount,
+                        node->pCommandHistory != nullptr ? op_name(node->pCommandHistory[done]) : "?"));
+                }
+            }
+        }
+    } else {
+        // every list the GPU had been given and not finished: the one that stopped part way is where the GPU hung or faulted,
+        // the ones at 0 were waiting behind it
+        size_t total = 0;
+        size_t unfinished = 0;
+
+        for (auto node = crumbs.pHeadAutoBreadcrumbNode; node != nullptr; node = node->pNext) {
+            ++total;
+            const uint32_t count = node->BreadcrumbCount;
+            const uint32_t done = node->pLastBreadcrumbValue != nullptr ? *node->pLastBreadcrumbValue : 0;
+
+            if (done >= count) {
+                continue;
+            }
+
+            if (++unfinished > 32) {
+                continue;
+            }
+
+            const uint32_t from = done > 8 ? done - 8 : 0;
+            const uint32_t to = (std::min)(count, done + 4);
+            std::string ops{};
+
+            for (uint32_t i = from; i < to && node->pCommandHistory != nullptr; ++i) {
+                const auto op = op_name(node->pCommandHistory[i]);
+                ops += i == done ? std::format(" >>{}:{}<<", i, op) : std::format(" {}:{}", i, op);
+            }
+
+            std::string markers{};
+
+            for (uint32_t c = 0; c < node->BreadcrumbContextsCount && node->pBreadcrumbContexts != nullptr; ++c) {
+                const auto& bc = node->pBreadcrumbContexts[c];
+
+                if (bc.BreadcrumbIndex + 16 >= done && bc.BreadcrumbIndex <= done + 4 && bc.pContextString != nullptr) {
+                    markers += std::format(" [{}] {}", bc.BreadcrumbIndex, utility::narrow(bc.pContextString));
+                }
+            }
+
+            REVR_LOG(spdlog::error("[DRED] {} list \"{}\" on queue \"{}\", {}: {} of {} operations done | around it:{}{}{}",
+                done > 0 ? "STOPPED PART WAY:" : "not started:", name_of(node->pCommandListDebugNameA, node->pCommandListDebugNameW),
+                name_of(node->pCommandQueueDebugNameA, node->pCommandQueueDebugNameW), owner_of(node->pCommandList), done, count, ops,
+                markers.empty() ? "" : " | markers:", markers));
+
+            // the whole list where the GPU stopped, repeated operations counted together, and all its markers
+            if (done > 0 && node->pCommandHistory != nullptr) {
+                std::string all{};
+                uint32_t run = 0;
+
+                for (uint32_t i = 0; i < count; ++i) {
+                    const bool cut = i == done;
+                    const bool same = i > 0 && !cut && node->pCommandHistory[i] == node->pCommandHistory[i - 1];
+
+                    if (!same) {
+                        if (run > 1) {
+                            all += std::format(" x{}", run);
+                        }
+
+                        all += cut ? std::format(" || STOPPED HERE || {}", op_name(node->pCommandHistory[i]))
+                                   : std::format(" {}", op_name(node->pCommandHistory[i]));
+                        run = 1;
+                    } else {
+                        ++run;
+                    }
+                }
+
+                if (run > 1) {
+                    all += std::format(" x{}", run);
+                }
+
+                std::string all_markers{};
+
+                for (uint32_t c = 0; c < node->BreadcrumbContextsCount && node->pBreadcrumbContexts != nullptr; ++c) {
+                    const auto& bc = node->pBreadcrumbContexts[c];
+
+                    if (bc.pContextString != nullptr) {
+                        all_markers += std::format(" [{}] {}", bc.BreadcrumbIndex, utility::narrow(bc.pContextString));
+                    }
+                }
+
+                REVR_LOG(spdlog::error("[DRED]   its operations:{}", all));
+                REVR_LOG(spdlog::error("[DRED]   its markers:{}", all_markers.empty() ? " none" : all_markers));
+            }
+        }
+
+        // the finished lists still in the record, in its order: the frame's work before and around the one that stopped
+        size_t index = 0;
+
+        for (auto node = crumbs.pHeadAutoBreadcrumbNode; node != nullptr && index < 64; node = node->pNext, ++index) {
+            const uint32_t count = node->BreadcrumbCount;
+            const uint32_t done = node->pLastBreadcrumbValue != nullptr ? *node->pLastBreadcrumbValue : 0;
+            REVR_LOG(spdlog::error("[DRED]   record {}: \"{}\" {}, {} of {} operations{}", index, name_of(node->pCommandListDebugNameA,
+                node->pCommandListDebugNameW), owner_of(node->pCommandList), done, count, done >= count ? "" : " (NOT FINISHED)"));
+        }
+
+        REVR_LOG(spdlog::error("[DRED] {} command list(s) in the record, {} not finished{}", total, unfinished,
+            unfinished > 32 ? " (the first 32 listed)" : ""));
+    }
+
+    D3D12_DRED_PAGE_FAULT_OUTPUT1 fault{};
+
+    if (const auto hr = dred->GetPageFaultAllocationOutput1(&fault); FAILED(hr)) {
+        REVR_LOG(spdlog::error("[DRED] no page fault data ({:x})", (uint32_t)hr));
+    } else {
+        REVR_LOG(spdlog::error("[DRED] page fault at GPU address 0x{:x}{}", (uint64_t)fault.PageFaultVA,
+            fault.PageFaultVA == 0 ? " (none: the GPU hung, no bad memory access)" : ""));
+
+        const auto list = [](const D3D12_DRED_ALLOCATION_NODE1* n, const char* what) {
+            for (int k = 0; n != nullptr && k < 24; n = n->pNext, ++k) {
+                REVR_LOG(spdlog::error("[DRED]   {} allocation at that address: \"{}\" (type {})", what, name_of(n->ObjectNameA, n->ObjectNameW),
+                    (int)n->AllocationType));
+            }
+        };
+
+        list(fault.pHeadExistingAllocationNode, "existing");
+        list(fault.pHeadRecentFreedAllocationNode, "recently freed");
+    }
+} catch (...) {
+    REVR_LOG(spdlog::error("[DRED] reading the device removed data failed"));
+}
+} // namespace d3d12_dred
+#endif
+
 D3D12Hook::~D3D12Hook() {
     unhook();
 }
 
 void* D3D12Hook::Streamline::link_swapchain_to_cmd_queue(void* rcx, void* rdx, void* r8, void* r9) {
     if (g_inside_d3d12_hook) {
-        spdlog::info("[Streamline] linkSwapchainToCmdQueue: {:x} (inside D3D12 hook)", (uintptr_t)_ReturnAddress());
+        REVR_LOG(spdlog::info("[Streamline] linkSwapchainToCmdQueue: {:x} (inside D3D12 hook)", (uintptr_t)_ReturnAddress()));
 
         auto& hook = D3D12Hook::s_streamline.link_swapchain_to_cmd_queue_hook;
         return hook->get_original<decltype(link_swapchain_to_cmd_queue)>()(rcx, rdx, r8, r9);
@@ -39,7 +432,7 @@ void* D3D12Hook::Streamline::link_swapchain_to_cmd_queue(void* rcx, void* rdx, v
 
     std::scoped_lock _{g_framework->get_hook_monitor_mutex()};
 
-    spdlog::info("[Streamline] linkSwapchainToCmdQueue: {:x}", (uintptr_t)_ReturnAddress());
+    REVR_LOG(spdlog::info("[Streamline] linkSwapchainToCmdQueue: {:x}", (uintptr_t)_ReturnAddress()));
 
     bool hook_was_nullptr = g_d3d12_hook == nullptr;
 
@@ -65,11 +458,11 @@ HRESULT WINAPI D3D12Hook::create_swapchain(IDXGIFactory4* factory, IUnknown* dev
     auto create_swap_chain_fn = s_create_swapchain_hook->get_original<decltype(D3D12Hook::create_swapchain)*>();
 
     if (g_inside_d3d12_hook) {
-        spdlog::info("create_swapchain (inside D3D12 hook)");
+        REVR_LOG(spdlog::info("create_swapchain (inside D3D12 hook)"));
         return create_swap_chain_fn(factory, device, hwnd, desc, p_fullscreen_desc, p_restrict_to_output, swap_chain);
     }
 
-    spdlog::info("create_swapchain called");
+    REVR_LOG(spdlog::info("create_swapchain called"));
 
     while (g_framework == nullptr) {
         std::this_thread::yield();
@@ -105,53 +498,53 @@ void D3D12Hook::hook_streamline(HMODULE dlssg_module) try {
         return;
     }
 
-    spdlog::info("[Streamline] Hooking Streamline");
+    REVR_LOG(spdlog::info("[Streamline] Hooking Streamline"));
 
     if (dlssg_module == nullptr) {
         dlssg_module = GetModuleHandleW(L"sl.dlss_g.dll");
     }
 
     if (dlssg_module == nullptr) {
-        spdlog::error("[Streamline] Failed to get sl.dlss_g.dll module handle");
+        REVR_LOG(spdlog::error("[Streamline] Failed to get sl.dlss_g.dll module handle"));
         return;
     }
 
     const auto str = utility::scan_string(dlssg_module, "linkSwapchainToCmdQueue");
 
     if (!str) {
-        spdlog::error("[Streamline] Failed to find linkSwapchainToCmdQueue");
+        REVR_LOG(spdlog::error("[Streamline] Failed to find linkSwapchainToCmdQueue"));
         return;
     }
 
     const auto str_ref = utility::scan_displacement_reference(dlssg_module, *str);
 
     if (!str_ref) {
-        spdlog::error("[Streamline] Failed to find linkSwapchainToCmdQueue reference");
+        REVR_LOG(spdlog::error("[Streamline] Failed to find linkSwapchainToCmdQueue reference"));
         return;
     }
 
     const auto fn = utility::find_function_start_with_call(*str_ref);
 
     if (!fn) {
-        spdlog::error("[Streamline] Failed to find linkSwapchainToCmdQueue function");
+        REVR_LOG(spdlog::error("[Streamline] Failed to find linkSwapchainToCmdQueue function"));
         return;
     }
 
     D3D12Hook::s_streamline.link_swapchain_to_cmd_queue_hook = std::make_unique<FunctionHook>(*fn, (uintptr_t)&Streamline::link_swapchain_to_cmd_queue);
 
     if (D3D12Hook::s_streamline.link_swapchain_to_cmd_queue_hook->create()) {
-        spdlog::info("[Streamline] Hooked linkSwapchainToCmdQueue");
+        REVR_LOG(spdlog::info("[Streamline] Hooked linkSwapchainToCmdQueue"));
     } else {
-        spdlog::error("[Streamline] Failed to hook linkSwapchainToCmdQueue");
+        REVR_LOG(spdlog::error("[Streamline] Failed to hook linkSwapchainToCmdQueue"));
     }
 
     D3D12Hook::s_streamline.setup = true;
 } catch(...) {
-    spdlog::error("[Streamline] Failed to hook Streamline");
+    REVR_LOG(spdlog::error("[Streamline] Failed to hook Streamline"));
 }
 
 bool D3D12Hook::hook() {
-    spdlog::info("Hooking D3D12");
+    REVR_LOG(spdlog::info("Hooking D3D12"));
 
     g_d3d12_hook = this;
     g_inside_d3d12_hook = true;
@@ -161,12 +554,12 @@ bool D3D12Hook::hook() {
     }};
 
     if (s_command_queue_offset != 0 && s_swapchain_vtable != nullptr && s_factory_vtable != nullptr) {
-        spdlog::info("Reinitializing D3D12Hook via known pointers");
+        REVR_LOG(spdlog::info("Reinitializing D3D12Hook via known pointers"));
 
         try {
             hook_impl();
         } catch (const std::exception& e) {
-            spdlog::error("Failed to initialize hooks: {}", e.what());
+            REVR_LOG(spdlog::error("Failed to initialize hooks: {}", e.what()));
             m_hooked = false;
         }
 
@@ -194,17 +587,17 @@ bool D3D12Hook::hook() {
     // Manually get D3D12CreateDevice export because the user may be running Windows 7
     const auto d3d12_module = LoadLibraryA("d3d12.dll");
     if (d3d12_module == nullptr) {
-        spdlog::error("Failed to load d3d12.dll");
+        REVR_LOG(spdlog::error("Failed to load d3d12.dll"));
         return false;
     }
 
     auto d3d12_create_device = (decltype(D3D12CreateDevice)*)GetProcAddress(d3d12_module, "D3D12CreateDevice");
     if (d3d12_create_device == nullptr) {
-        spdlog::error("Failed to get D3D12CreateDevice export");
+        REVR_LOG(spdlog::error("Failed to get D3D12CreateDevice export"));
         return false;
     }
 
-    spdlog::info("Creating dummy device");
+    REVR_LOG(spdlog::info("Creating dummy device"));
 
     // Get the original on-disk bytes of the D3D12CreateDevice export
     const auto original_bytes = utility::get_original_bytes(d3d12_create_device);
@@ -213,7 +606,7 @@ bool D3D12Hook::hook() {
     // it allows compatibility with ReShade and other overlays that hook it
     // this is just a dummy device anyways, we don't want the other overlays to be able to use it
     if (original_bytes) {
-        spdlog::info("D3D12CreateDevice appears to be hooked, temporarily unhooking");
+        REVR_LOG(spdlog::info("D3D12CreateDevice appears to be hooked, temporarily unhooking"));
 
         std::vector<uint8_t> hooked_bytes(original_bytes->size());
         memcpy(hooked_bytes.data(), d3d12_create_device, original_bytes->size());
@@ -222,41 +615,41 @@ bool D3D12Hook::hook() {
         memcpy(d3d12_create_device, original_bytes->data(), original_bytes->size());
         
         if (FAILED(d3d12_create_device(nullptr, feature_level, IID_PPV_ARGS(&device)))) {
-            spdlog::error("Failed to create D3D12 Dummy device");
+            REVR_LOG(spdlog::error("Failed to create D3D12 Dummy device"));
             memcpy(d3d12_create_device, hooked_bytes.data(), hooked_bytes.size());
             return false;
         }
 
-        spdlog::info("Restoring hooked bytes for D3D12CreateDevice");
+        REVR_LOG(spdlog::info("Restoring hooked bytes for D3D12CreateDevice"));
         memcpy(d3d12_create_device, hooked_bytes.data(), hooked_bytes.size());
     } else { // D3D12CreateDevice is not hooked
         if (FAILED(d3d12_create_device(nullptr, feature_level, IID_PPV_ARGS(&device)))) {
-            spdlog::error("Failed to create D3D12 Dummy device");
+            REVR_LOG(spdlog::error("Failed to create D3D12 Dummy device"));
             return false;
         }
     }
 
-    spdlog::info("Dummy device: {:x}", (uintptr_t)device);
+    REVR_LOG(spdlog::info("Dummy device: {:x}", (uintptr_t)device));
 
     // Manually get CreateDXGIFactory export because the user may be running Windows 7
     const auto dxgi_module = LoadLibraryA("dxgi.dll");
     if (dxgi_module == nullptr) {
-        spdlog::error("Failed to load dxgi.dll");
+        REVR_LOG(spdlog::error("Failed to load dxgi.dll"));
         return false;
     }
 
     auto create_dxgi_factory = (decltype(CreateDXGIFactory)*)GetProcAddress(dxgi_module, "CreateDXGIFactory");
 
     if (create_dxgi_factory == nullptr) {
-        spdlog::error("Failed to get CreateDXGIFactory export");
+        REVR_LOG(spdlog::error("Failed to get CreateDXGIFactory export"));
         return false;
     }
 
-    spdlog::info("Creating dummy DXGI factory");
+    REVR_LOG(spdlog::info("Creating dummy DXGI factory"));
 
     IDXGIFactory4* factory{ nullptr };
     if (FAILED(create_dxgi_factory(IID_PPV_ARGS(&factory)))) {
-        spdlog::error("Failed to create D3D12 Dummy DXGI Factory");
+        REVR_LOG(spdlog::error("Failed to create D3D12 Dummy DXGI Factory"));
         return false;
     }
 
@@ -266,15 +659,15 @@ bool D3D12Hook::hook() {
     queue_desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
     queue_desc.NodeMask = 0;
 
-    spdlog::info("Creating dummy command queue");
+    REVR_LOG(spdlog::info("Creating dummy command queue"));
 
     ID3D12CommandQueue* command_queue{ nullptr };
     if (FAILED(device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&command_queue)))) {
-        spdlog::error("Failed to create D3D12 Dummy Command Queue");
+        REVR_LOG(spdlog::error("Failed to create D3D12 Dummy Command Queue"));
         return false;
     }
 
-    spdlog::info("Creating dummy swapchain");
+    REVR_LOG(spdlog::info("Creating dummy swapchain"));
 
     // used in CreateSwapChainForHwnd fallback
     HWND hwnd = 0;
@@ -337,24 +730,24 @@ bool D3D12Hook::hook() {
         auto& attempt = swapchain_attempts[i];
         
         try {
-            spdlog::info("Trying swapchain attempt {}", i);
+            REVR_LOG(spdlog::info("Trying swapchain attempt {}", i));
 
             if (attempt()) {
-                spdlog::info("Created dummy swapchain on attempt {}", i);
+                REVR_LOG(spdlog::info("Created dummy swapchain on attempt {}", i));
                 any_succeed = true;
                 break;
             }
         } catch (std::exception& e) {
-            spdlog::error("Failed to create dummy swapchain on attempt {}: {}", i, e.what());
+            REVR_LOG(spdlog::error("Failed to create dummy swapchain on attempt {}: {}", i, e.what()));
         } catch(...) {
-            spdlog::error("Failed to create dummy swapchain on attempt {}: unknown exception", i);
+            REVR_LOG(spdlog::error("Failed to create dummy swapchain on attempt {}: unknown exception", i));
         }
 
-        spdlog::error("Attempt {} failed", i);
+        REVR_LOG(spdlog::error("Attempt {} failed", i));
     }
 
     if (!any_succeed) {
-        spdlog::error("Failed to create D3D12 Dummy Swap Chain");
+        REVR_LOG(spdlog::error("Failed to create D3D12 Dummy Swap Chain"));
 
         if (hwnd) {
             ::DestroyWindow(hwnd);
@@ -367,36 +760,38 @@ bool D3D12Hook::hook() {
         return false;
     }
 
-    spdlog::info("Querying dummy swapchain");
+    REVR_LOG(spdlog::info("Querying dummy swapchain"));
 
     if (FAILED(swap_chain1->QueryInterface(IID_PPV_ARGS(&swap_chain)))) {
-        spdlog::error("Failed to retrieve D3D12 DXGI SwapChain");
+        REVR_LOG(spdlog::error("Failed to retrieve D3D12 DXGI SwapChain"));
         return false;
     }
 
     try {
         const auto ti = utility::rtti::get_type_info(swap_chain1);
         const auto swapchain_classname = ti != nullptr && ti->name() != nullptr ? std::string_view{ti->name()} : "unknown";
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
         const auto raw_name = ti != nullptr && ti->raw_name() != nullptr ? std::string_view{ti->raw_name()} : "unknown";
 
-        spdlog::info("Swapchain type info: {}", swapchain_classname);
-        spdlog::info("Swapchain raw type info: {}", raw_name);
+        REVR_LOG(spdlog::info("Swapchain type info: {}", swapchain_classname));
+        REVR_LOG(spdlog::info("Swapchain raw type info: {}", raw_name));
+#endif
         
         if (swapchain_classname.contains("interposer::DXGISwapChain")) { // DLSS3
-            spdlog::info("Found Streamline (DLSSFG) swapchain during dummy initialization: {:x}", (uintptr_t)swap_chain1);
+            REVR_LOG(spdlog::info("Found Streamline (DLSSFG) swapchain during dummy initialization: {:x}", (uintptr_t)swap_chain1));
             m_using_frame_generation_swapchain = true;
         } else if (swapchain_classname.contains("FrameInterpolationSwapChain")) { // FSR3
-            spdlog::info("Found FSR3 swapchain during dummy initialization: {:x}", (uintptr_t)swap_chain1);
+            REVR_LOG(spdlog::info("Found FSR3 swapchain during dummy initialization: {:x}", (uintptr_t)swap_chain1));
             m_using_frame_generation_swapchain = true;
         }
     } catch (const std::exception& e) {
-        spdlog::error("Failed to get type info: {}", e.what());
+        REVR_LOG(spdlog::error("Failed to get type info: {}", e.what()));
     } catch (...) {
-        spdlog::error("Failed to get type info: unknown exception");
+        REVR_LOG(spdlog::error("Failed to get type info: unknown exception"));
     }
 
 
-    spdlog::info("Finding command queue offset");
+    REVR_LOG(spdlog::info("Finding command queue offset"));
 
     s_command_queue_offset = 0;
 
@@ -413,7 +808,7 @@ bool D3D12Hook::hook() {
 
         if (data == command_queue) {
             s_command_queue_offset = i;
-            spdlog::info("Found command queue offset: {:x}", i);
+            REVR_LOG(spdlog::info("Found command queue offset: {:x}", i));
             break;
         }
     }
@@ -465,8 +860,8 @@ bool D3D12Hook::hook() {
                     s_proton_swapchain_offset = base;
                     should_break = true;
 
-                    spdlog::info("Proton potentially detected");
-                    spdlog::info("Found command queue offset: {:x}", i);
+                    REVR_LOG(spdlog::info("Proton potentially detected"));
+                    REVR_LOG(spdlog::info("Found command queue offset: {:x}", i));
                     break;
                 }
             }
@@ -478,7 +873,7 @@ bool D3D12Hook::hook() {
     }
 
     if (s_command_queue_offset == 0) {
-        spdlog::error("Failed to find command queue offset");
+        REVR_LOG(spdlog::error("Failed to find command queue offset"));
         return false;
     }
 
@@ -490,7 +885,7 @@ bool D3D12Hook::hook() {
 
         hook_impl();
     } catch (const std::exception& e) {
-        spdlog::error("Failed to initialize hooks: {}", e.what());
+        REVR_LOG(spdlog::error("Failed to initialize hooks: {}", e.what()));
         m_hooked = false;
     }
 
@@ -514,7 +909,7 @@ bool D3D12Hook::hook() {
 }
 
 void D3D12Hook::hook_impl() {
-    spdlog::info("Initializing hooks");
+    REVR_LOG(spdlog::info("Initializing hooks"));
 
     hook_streamline();
 
@@ -545,7 +940,7 @@ bool D3D12Hook::unhook() {
         return true;
     }
 
-    spdlog::info("Unhooking D3D12");
+    REVR_LOG(spdlog::info("Unhooking D3D12"));
 
     m_present_hook.reset();
     m_swapchain_hook.reset();
@@ -626,6 +1021,8 @@ HRESULT WINAPI D3D12Hook::present(IDXGISwapChain3* swap_chain, uint64_t sync_int
         d3d12->m_command_queue = *(ID3D12CommandQueue**)((uintptr_t)swap_chain + d3d12->s_command_queue_offset);
     }
 
+    d3d12_dred::watch_queue(d3d12->m_command_queue); // [DRED 14.11.2026] once
+
     if (d3d12->m_swapchain_0 == nullptr) {
         d3d12->m_swapchain_0 = swap_chain;
     } else if (d3d12->m_swapchain_1 == nullptr && swap_chain != d3d12->m_swapchain_0) {
@@ -643,24 +1040,24 @@ HRESULT WINAPI D3D12Hook::present(IDXGISwapChain3* swap_chain, uint64_t sync_int
 
             memcpy(present_fn, original_bytes->data(), original_bytes->size());
 
-            spdlog::info("Present fixed");
+            REVR_LOG(spdlog::info("Present fixed"));
         }
 
         if ((uintptr_t)present_fn != (uintptr_t)D3D12Hook::present && g_present_depth == 1) {
-            spdlog::info("Attempting to call real present function");
+            REVR_LOG(spdlog::info("Attempting to call real present function"));
 
             ++g_present_depth;
             const auto result = present_fn(swap_chain, sync_interval, flags, r9);
             --g_present_depth;
 
             if (result != S_OK) {
-                spdlog::error("Present failed: {:x}", (uint64_t)result);
+                REVR_LOG(spdlog::error("Present failed: {:x}", (uint64_t)result));
             }
 
             return result;
         }
 
-        spdlog::info("Just returning S_OK");
+        REVR_LOG(spdlog::info("Just returning S_OK"));
         return S_OK;
     }
 
@@ -673,11 +1070,24 @@ HRESULT WINAPI D3D12Hook::present(IDXGISwapChain3* swap_chain, uint64_t sync_int
     auto result = S_OK;
     
     if (!d3d12->m_ignore_next_present) {
+        d3d12->m_last_sync_interval = (uint32_t)sync_interval; // [WINDOW PASS 06.11.2026 evening]
+        d3d12->m_last_present_flags = (uint32_t)flags;
         result = present_fn(swap_chain, sync_interval, flags, r9);
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
         if (result != S_OK) {
-            spdlog::error("Present failed: {:x}", (uint64_t)result);
+            REVR_LOG(spdlog::error("Present failed: {:x}", (uint64_t)result));
+
+            // [DEVICE REMOVED 04.11.2026] why, once (hung, reset, driver error, invalid call: tells a GPU fault from a hang)
+            static bool s_reason_logged = false;
+
+            if (result == DXGI_ERROR_DEVICE_REMOVED && !s_reason_logged && d3d12->m_device != nullptr) {
+                s_reason_logged = true;
+                REVR_LOG(spdlog::error("Device removed, reason: {:x}", (uint32_t)d3d12->m_device->GetDeviceRemovedReason()));
+                d3d12_dred::log(d3d12->m_device); // [DRED 14.11.2026] which command list the GPU stopped in
+            }
         }
+#endif
     } else {
         d3d12->m_ignore_next_present = false;
     }
@@ -700,8 +1110,8 @@ HRESULT WINAPI D3D12Hook::set_fullscreen_state(IDXGISwapChain3* swap_chain, BOOL
 
     std::scoped_lock _{g_framework->get_hook_monitor_mutex()};
 
-    spdlog::info("D3D12 set fullscreen state called");
-    spdlog::info(" Parameters: Fullscreen {}", Fullscreen);
+    REVR_LOG(spdlog::info("D3D12 set fullscreen state called"));
+    REVR_LOG(spdlog::info(" Parameters: Fullscreen {}", Fullscreen));
 
     static bool isWindowed = false;
 
@@ -721,7 +1131,7 @@ HRESULT WINAPI D3D12Hook::set_fullscreen_state(IDXGISwapChain3* swap_chain, BOOL
     const auto result = set_fullscreen_state_fn(swap_chain, Fullscreen, pTarget);
 
     if (result != S_OK) {
-        spdlog::error("Set Fullscreen State failed: {:x}", result);
+        REVR_LOG(spdlog::error("Set Fullscreen State failed: {:x}", result));
     }
 
     return result;
@@ -736,9 +1146,10 @@ HRESULT WINAPI D3D12Hook::resize_buffers(IDXGISwapChain3* swap_chain, UINT buffe
 
     std::scoped_lock _{g_framework->get_hook_monitor_mutex()};
 
-    spdlog::info("D3D12 resize buffers called");
-    spdlog::info(" Parameters: buffer_count {} width {} height {} new_format {} swap_chain_flags {}", buffer_count, width, height, new_format, swap_chain_flags);
+    REVR_LOG(spdlog::info("D3D12 resize buffers called"));
+    REVR_LOG(spdlog::info(" Parameters: buffer_count {} width {} height {} new_format {} swap_chain_flags {}", buffer_count, width, height, new_format, swap_chain_flags));
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] the stack walk is for the log only
     // Walk the callstack and print out module names
     try {
         std::string callstack_str{};
@@ -747,12 +1158,13 @@ HRESULT WINAPI D3D12Hook::resize_buffers(IDXGISwapChain3* swap_chain, UINT buffe
             callstack_str += entry.description() + "\n";
         }
 
-        spdlog::info("callstack: \n{}", callstack_str); // because this can be running on a different thread and get garbled in the middle of the log
+        REVR_LOG(spdlog::info("callstack: \n{}", callstack_str)); // because this can be running on a different thread and get garbled in the middle of the log
     } catch (const std::exception& e) {
-        spdlog::error("Failed to print callstack: {}", e.what());
+        REVR_LOG(spdlog::error("Failed to print callstack: {}", e.what()));
     } catch(...) {
-        spdlog::error("Failed to print callstack: unknown exception");
+        REVR_LOG(spdlog::error("Failed to print callstack: unknown exception"));
     }
+#endif
 
     auto d3d12 = g_d3d12_hook;
     //auto& hook = d3d12->m_resize_buffers_hook;
@@ -778,23 +1190,23 @@ HRESULT WINAPI D3D12Hook::resize_buffers(IDXGISwapChain3* swap_chain, UINT buffe
 
             memcpy(resize_buffers_fn, original_bytes->data(), original_bytes->size());
 
-            spdlog::info("Resize buffers fixed");
+            REVR_LOG(spdlog::info("Resize buffers fixed"));
         }
 
         if ((uintptr_t)resize_buffers_fn != (uintptr_t)&D3D12Hook::resize_buffers && g_resize_buffers_depth == 1) {
-            spdlog::info("Attempting to call the real resize buffers function");
+            REVR_LOG(spdlog::info("Attempting to call the real resize buffers function"));
 
             ++g_resize_buffers_depth;
             const auto result = resize_buffers_fn(swap_chain, buffer_count, width, height, new_format, swap_chain_flags);
             --g_resize_buffers_depth;
 
             if (result != S_OK) {
-                spdlog::error("Resize buffers failed: {:x}", result);
+                REVR_LOG(spdlog::error("Resize buffers failed: {:x}", result));
             }
 
             return result;
         } else {
-            spdlog::info("Just returning S_OK");
+            REVR_LOG(spdlog::info("Just returning S_OK"));
             return S_OK;
         }
     }
@@ -808,7 +1220,7 @@ HRESULT WINAPI D3D12Hook::resize_buffers(IDXGISwapChain3* swap_chain, UINT buffe
     const auto result = resize_buffers_fn(swap_chain, buffer_count, width, height, new_format, swap_chain_flags);
     
     if (result != S_OK) {
-        spdlog::error("Resize buffers failed: {:x}", result);
+        REVR_LOG(spdlog::error("Resize buffers failed: {:x}", result));
     }
 
     --g_resize_buffers_depth;
@@ -825,9 +1237,10 @@ HRESULT WINAPI D3D12Hook::resize_target(IDXGISwapChain3* swap_chain, const DXGI_
 
     std::scoped_lock _{g_framework->get_hook_monitor_mutex()};
 
-    spdlog::info("D3D12 resize target called");
-    spdlog::info(" Parameters: new_target_parameters {:x}", (uintptr_t)new_target_parameters);
+    REVR_LOG(spdlog::info("D3D12 resize target called"));
+    REVR_LOG(spdlog::info(" Parameters: new_target_parameters {:x}", (uintptr_t)new_target_parameters));
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] the stack walk is for the log only
     // Walk the callstack and print out module names
     try {
         std::string callstack_str{};
@@ -836,12 +1249,13 @@ HRESULT WINAPI D3D12Hook::resize_target(IDXGISwapChain3* swap_chain, const DXGI_
             callstack_str += entry.description() + "\n";
         }
 
-        spdlog::info("callstack: \n{}", callstack_str); // because this can be running on a different thread and get garbled in the middle of the log
+        REVR_LOG(spdlog::info("callstack: \n{}", callstack_str)); // because this can be running on a different thread and get garbled in the middle of the log
     } catch (const std::exception& e) {
-        spdlog::error("Failed to print callstack: {}", e.what());
+        REVR_LOG(spdlog::error("Failed to print callstack: {}", e.what()));
     } catch(...) {
-        spdlog::error("Failed to print callstack: unknown exception");
+        REVR_LOG(spdlog::error("Failed to print callstack: unknown exception"));
     }
+#endif
 
     auto d3d12 = g_d3d12_hook;
     //auto resize_target_fn = d3d12->m_resize_target_hook->get_original<decltype(D3D12Hook::resize_target)*>();
@@ -867,23 +1281,23 @@ HRESULT WINAPI D3D12Hook::resize_target(IDXGISwapChain3* swap_chain, const DXGI_
 
             memcpy(resize_target_fn, original_bytes->data(), original_bytes->size());
 
-            spdlog::info("Resize target fixed");
+            REVR_LOG(spdlog::info("Resize target fixed"));
         }
 
         if ((uintptr_t)resize_target_fn != (uintptr_t)&D3D12Hook::resize_target && g_resize_target_depth == 1) {
-            spdlog::info("Attempting to call the real resize target function");
+            REVR_LOG(spdlog::info("Attempting to call the real resize target function"));
 
             ++g_resize_target_depth;
             const auto result = resize_target_fn(swap_chain, new_target_parameters);
             --g_resize_target_depth;
 
             if (result != S_OK) {
-                spdlog::error("Resize target failed: {:x}", result);
+                REVR_LOG(spdlog::error("Resize target failed: {:x}", result));
             }
 
             return result;
         } else {
-            spdlog::info("Just returning S_OK");
+            REVR_LOG(spdlog::info("Just returning S_OK"));
             return S_OK;
         }
     }
@@ -897,7 +1311,7 @@ HRESULT WINAPI D3D12Hook::resize_target(IDXGISwapChain3* swap_chain, const DXGI_
     const auto result = resize_target_fn(swap_chain, new_target_parameters);
     
     if (result != S_OK) {
-        spdlog::error("Resize target failed: {:x}", result);
+        REVR_LOG(spdlog::error("Resize target failed: {:x}", result));
     }
 
     --g_resize_target_depth;

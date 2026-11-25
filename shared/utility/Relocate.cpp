@@ -1,3 +1,4 @@
+#include "ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <optional>
 #include <vector>
 #include <array>
@@ -26,7 +27,7 @@ namespace utility {
                     return;
                 }
 
-                spdlog::info("[relocate_pointers] Scanning {:x} for range <{:x}, {:x}> (size {:x})", (uintptr_t)scan_start, old_start, old_end, scan_size);
+                REVR_LOG(spdlog::info("[relocate_pointers] Scanning {:x} for range <{:x}, {:x}> (size {:x})", (uintptr_t)scan_start, old_start, old_end, scan_size));
 
                 for (auto i = 0; i < scan_size; i += skip_length) {
                     if (IsBadReadPtr(scan_start + i, sizeof(void*))) {
@@ -38,7 +39,7 @@ namespace utility {
 
                     if (ptr >= old_start && ptr < old_end) {
                         const auto new_ptr = new_start + (ptr - old_start);
-                        spdlog::info("[relocate_pointers] {:x}+{:x}, {:x} -> {:x}", (uintptr_t)scan_start, (uintptr_t)i, (uintptr_t)ptr, (uintptr_t)new_ptr);
+                        REVR_LOG(spdlog::info("[relocate_pointers] {:x}+{:x}, {:x} -> {:x}", (uintptr_t)scan_start, (uintptr_t)i, (uintptr_t)ptr, (uintptr_t)new_ptr));
                         const auto prev = ptr;
                         ptr = new_ptr;
 

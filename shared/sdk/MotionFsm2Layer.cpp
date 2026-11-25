@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <spdlog/spdlog.h>
 
 #include <utility/Relocate.hpp>
@@ -380,7 +381,7 @@ void TreeObject::relocate_datas(uintptr_t old_start, uintptr_t old_end, sdk::Nat
 
 ::REManagedObject* TreeObject::get_uservariable_hub() const {
     static uint32_t uservar_hub_offset = [this]() -> uint32_t {
-        spdlog::info("Searching for uservar hub offset...");
+        REVR_LOG(spdlog::info("Searching for uservar hub offset..."));
 
         for (auto i = 0; i < sizeof(*this); i += sizeof(void*)) {
             const auto obj = *(::REManagedObject**)((uintptr_t)this + i);
@@ -390,12 +391,12 @@ void TreeObject::relocate_datas(uintptr_t old_start, uintptr_t old_end, sdk::Nat
             }
 
             if (utility::re_managed_object::is_a(obj, "via.userdata.UserVariablesHub")) {
-                spdlog::info("Found uservar hub at offset {:x}", i);
+                REVR_LOG(spdlog::info("Found uservar hub at offset {:x}", i));
                 return i;
             }
         }
 
-        spdlog::error("Failed to find UserVariablesHub in TreeObject");
+        REVR_LOG(spdlog::error("Failed to find UserVariablesHub in TreeObject"));
         return 0;
     }();
 

@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <unordered_set>
 
 #include <spdlog/spdlog.h>
@@ -110,7 +111,7 @@ void FirstPerson::on_draw_ui() {
     m_roomscale->draw("Roomscale Movement (VR)");
 
     static bool adjust_hand_offset{false};
-    ImGui::Checkbox("Adjust Hand Offset", &adjust_hand_offset);
+    menu_text::Checkbox("Adjust Hand Offset", &adjust_hand_offset);
 
     if (adjust_hand_offset) {
         auto& vr = VR::get();
@@ -165,7 +166,7 @@ void FirstPerson::on_draw_ui() {
     ImGui::DragFloat4("Scale Debug", (float*)&m_scale_debug.x, 1.0f, -1.0f, 1.0f);
     ImGui::DragFloat4("Scale Debug 2", (float*)&m_scale_debug2.x, 1.0f, -1.0f, 1.0f);
     ImGui::DragFloat4("Offset Debug", (float*)&m_offset_debug.x, 1.0f, -1.0f, 1.0f);
-    ImGui::DragFloat("VR Scale", (float*)&m_vr_scale, 0.01f, 0.01f, 1.0f);
+    menu_text::DragFloat("VR Scale", (float*)&m_vr_scale, 0.01f, 0.01f, 1.0f);
 
     ImGui::DragFloat3("Controller rotation (Left)", (float*)&m_left_hand_rotation_offset, 0.1f, -360.0f, 360.0f);
     ImGui::DragFloat3("Controller rotation (Right)", (float*)&m_right_hand_rotation_offset, 0.1f, -360.0f, 360.0f);
@@ -263,7 +264,7 @@ void FirstPerson::on_lua_state_created(sol::state& state) {
             sdk.hook(sdk.find_type_definition(sdk.game_namespace("FlashLight")):get_method("applyTransform"), on_pre_apply_transform, on_post_apply_transform)
         )");
     } catch (const std::exception& e) {
-        spdlog::info("Error while trying to hook FlashLight.applyTransform: {}", e.what());
+        REVR_LOG(spdlog::info("Error while trying to hook FlashLight.applyTransform: {}", e.what()));
     }
 #endif
 }
@@ -733,7 +734,7 @@ bool FirstPerson::update_pointers_from_camera_system(RopewayCameraSystem* camera
             return false;
         }
 
-        spdlog::info("Found Player {:s} {:p}", m_player_name.data(), (void*)joint->parentTransform);
+        REVR_LOG(spdlog::info("Found Player {:s} {:p}", m_player_name.data(), (void*)joint->parentTransform));
     }
 
     // Update player transform pointer
@@ -751,7 +752,7 @@ bool FirstPerson::update_pointers_from_camera_system(RopewayCameraSystem* camera
 
         if (utility::re_string::equals(controller->activeCamera->ownerGameObject->name, L"PlayerCameraController")) {
             m_player_camera_controller = controller;
-            spdlog::info("Found PlayerCameraController {:p}", (void*)m_player_camera_controller);
+            REVR_LOG(spdlog::info("Found PlayerCameraController {:p}", (void*)m_player_camera_controller));
         }
 
         return m_player_camera_controller != nullptr;
@@ -1082,10 +1083,10 @@ void FirstPerson::update_player_arm_ik(RETransform* transform) {
                     }
                 }
             } else {
-                spdlog::info("Arm fit list is empty");
+                REVR_LOG(spdlog::info("Arm fit list is empty"));
             }
         } else {
-            spdlog::info("Arm fit component not found");
+            REVR_LOG(spdlog::info("Arm fit component not found"));
         }
 
         // radians -> deg

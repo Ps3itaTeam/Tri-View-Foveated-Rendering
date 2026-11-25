@@ -1,4 +1,5 @@
 #if defined(RE7) || defined(RE8)
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <sdk/SceneManager.hpp>
 #include <sdk/MurmurHash.hpp>
 #include <sdk/Application.hpp>
@@ -21,10 +22,10 @@ std::optional<std::string> RE8VR::on_initialize() {
     auto app_player_shadow_late_update = sdk::find_method_definition("app.PlayerShadow", "lateUpdate");
 
     if (app_player_shadow_late_update == nullptr) {
-        spdlog::info("[RE8VR] Could not find app.PlayerShadow.lateUpdate");
-        spdlog::info("[RE8VR] Shadows may look abnormal");
+        REVR_LOG(spdlog::info("[RE8VR] Could not find app.PlayerShadow.lateUpdate"));
+        REVR_LOG(spdlog::info("[RE8VR] Shadows may look abnormal"));
     } else {
-        spdlog::info("[RE8VR] Found app.PlayerShadow.lateUpdate");
+        REVR_LOG(spdlog::info("[RE8VR] Found app.PlayerShadow.lateUpdate"));
 
         g_hookman.add(app_player_shadow_late_update, &RE8VR::pre_shadow_late_update, &RE8VR::post_shadow_late_update);
     }
@@ -98,7 +99,19 @@ void RE8VR::on_lua_state_created(sol::state& lua) {
         "fix_player_camera", &RE8VR::fix_player_camera,
         "fix_player_shadow", &RE8VR::fix_player_shadow,
         "get_localplayer", &RE8VR::get_localplayer,
-        "get_weapon_object", &RE8VR::get_weapon_object);
+        "get_weapon_object", &RE8VR::get_weapon_object,
+        // [RELOADED MENU 15.11.2026] the body options as RE7VR Reloaded's settings panel sets them (its "VR Display" page
+        // calls these through pcall: without them its switches changed nothing on this build)
+        "set_hide_upper_body", [](RE8VR* self, bool v) { self->m_hide_upper_body->value() = v; },
+        "set_hide_lower_body", [](RE8VR* self, bool v) { self->m_hide_lower_body->value() = v; },
+        "set_hide_arms", [](RE8VR* self, bool v) { self->m_hide_arms->value() = v; },
+        "set_autohide_upper_cutscenes", [](RE8VR* self, bool v) { self->m_hide_upper_body_cutscenes->value() = v; },
+        "set_autohide_lower_cutscenes", [](RE8VR* self, bool v) { self->m_hide_lower_body_cutscenes->value() = v; },
+        "is_hiding_upper_body", [](RE8VR* self) { return self->m_hide_upper_body->value(); },
+        "is_hiding_lower_body", [](RE8VR* self) { return self->m_hide_lower_body->value(); },
+        "is_hiding_arms", [](RE8VR* self) { return self->m_hide_arms->value(); },
+        "is_autohiding_upper_cutscenes", [](RE8VR* self) { return self->m_hide_upper_body_cutscenes->value(); },
+        "is_autohiding_lower_cutscenes", [](RE8VR* self) { return self->m_hide_lower_body_cutscenes->value(); });
 
     lua["re8vr"] = this;
 }
@@ -437,7 +450,7 @@ void RE8VR::update_body_ik(glm::quat* camera_rotation, Vector4f* camera_pos) {
         ik_leg = sdk::call_object_func_easy<::REManagedObject*>(m_player, "createComponent(System.Type)", via_motion_ik_leg->get_runtime_type());
 
         if (ik_leg == nullptr) {
-            spdlog::error("[RE8VR] Failed to create IK leg component");
+            REVR_LOG(spdlog::error("[RE8VR] Failed to create IK leg component"));
             return;
         }
     }
@@ -466,7 +479,7 @@ void RE8VR::update_body_ik(glm::quat* camera_rotation, Vector4f* camera_pos) {
     auto motion = utility::re_component::find<::REManagedObject>(m_player->transform, via_motion_motion_type);
 
     if (motion == nullptr) {
-        spdlog::error("[RE8VR] Failed to get motion component");
+        REVR_LOG(spdlog::error("[RE8VR] Failed to get motion component"));
         return;
     }
 
@@ -655,6 +668,10 @@ void RE8VR::fix_player_camera(::REManagedObject* player_camera) {
     auto camera_rot = sdk::get_transform_rotation(camera_transform);
     auto camera_pos = sdk::get_transform_position(camera_transform);
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] heights for the debug log
+    camera_probe().offset_applied = false; // [HEIGHT PROBE 12.11.2026]
+#endif
+
     // fix camera position.
     if (is_maximum_controllable && vr->is_using_controllers()) {
         auto param_container = sdk::get_object_field<::REManagedObject*>(player_camera, "_CurrentParamContainer");
@@ -674,6 +691,9 @@ void RE8VR::fix_player_camera(::REManagedObject* player_camera) {
                     current_camera_offset.y = 0.0f;
                     camera_pos += camera_rot * current_camera_offset;
                     camera_pos.w = 1.0f;
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] heights for the debug log
+                    camera_probe().offset_applied = true; // [HEIGHT PROBE 12.11.2026]
+#endif
                 }
             }
         }
@@ -681,6 +701,14 @@ void RE8VR::fix_player_camera(::REManagedObject* player_camera) {
 
     auto camera_rot_pre_hmd = camera_rot;
     auto camera_pos_pre_hmd = camera_pos;
+
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] heights for the debug log
+    // [HEIGHT PROBE 12.11.2026]
+    camera_probe().calls.fetch_add(1);
+    camera_probe().pre_y = camera_pos.y;
+    camera_probe().controllable = is_maximum_controllable;
+    camera_probe().cutscene = m_is_in_cutscene;
+#endif
 
     auto camera_rot_no_shake_field = sdk::get_object_field<glm::quat>(player_camera, "<CameraRotation>k__BackingField");
 
@@ -694,6 +722,9 @@ void RE8VR::fix_player_camera(::REManagedObject* player_camera) {
     vr->apply_hmd_transform(camera_rot_no_shake, zero_v4);
     vr->apply_hmd_transform(camera_rot, camera_pos);
     camera_pos.w = 1.0f;
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] heights for the debug log
+    camera_probe().post_y = camera_pos.y; // [HEIGHT PROBE 12.11.2026]
+#endif
 
     auto camera_joint = utility::re_transform::get_joint(*camera_transform, 0);
 
@@ -1325,7 +1356,7 @@ bool RE8VR::update_ik_pointers() {
     auto hand_ik = *sdk::get_object_field<sdk::SystemArray*>(m_hand_touch, "HandIK");
 
     if (hand_ik == nullptr || hand_ik->size() < 2) {
-        spdlog::info("[RE8VR] HandIK is null or empty");
+        REVR_LOG(spdlog::info("[RE8VR] HandIK is null or empty"));
         reset_hand_ik();
         return false;
     }
@@ -1449,7 +1480,7 @@ void RE8VR::update_heal_gesture() {
 #endif
 
     if (items_list == nullptr || weapon_change == nullptr || mesh_controller == nullptr) {
-        spdlog::info("[RE8VR] Could not find inventory, weapon change, or mesh controller");
+        REVR_LOG(spdlog::info("[RE8VR] Could not find inventory, weapon change, or mesh controller"));
         return;
     }
 
@@ -1457,7 +1488,7 @@ void RE8VR::update_heal_gesture() {
     auto items = *sdk::get_object_field<sdk::SystemArray*>(items_list, "mItems");
 
     if (items == nullptr) {
-        spdlog::info("[RE8VR] mItems is null");
+        REVR_LOG(spdlog::info("[RE8VR] mItems is null"));
         return;
     }
 
@@ -1511,7 +1542,7 @@ void RE8VR::update_heal_gesture() {
         m_heal_gesture.was_grip_down = false;
         m_heal_gesture.was_trigger_down = false;
 
-        spdlog::info("[RE8VR] Medicine has no owner");
+        REVR_LOG(spdlog::info("[RE8VR] Medicine has no owner"));
 
         return;
     }
@@ -1576,7 +1607,7 @@ void RE8VR::update_heal_gesture() {
                 auto equip_manager = utility::re_component::find<::REManagedObject>(m_player->transform, "app.EquipManager");
 
                 if (equip_manager == nullptr) {
-                    spdlog::info("[RE8VR] No equip manager found");
+                    REVR_LOG(spdlog::info("[RE8VR] No equip manager found"));
                     return;
                 }
 

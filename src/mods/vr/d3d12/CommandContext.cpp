@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <spdlog/spdlog.h>
 #include <utility/String.hpp>
 
@@ -5,12 +6,15 @@
 
 #include "TextureContext.hpp"
 #include "CommandContext.hpp"
+#include "SubmitTimeline.hpp"
+#include "../CpuStats.hpp"
 
 namespace d3d12 {
 bool CommandContext::setup(const wchar_t* name) {
     std::scoped_lock _{this->mtx};
 
     this->internal_name = name;
+    this->tag_name = utility::narrow(name);
 
     auto& hook = g_framework->get_d3d12_hook();
     auto device = hook->get_device();
@@ -20,7 +24,7 @@ bool CommandContext::setup(const wchar_t* name) {
     this->fence.Reset();
 
     if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&this->cmd_allocator)))) {
-        spdlog::error("[VR] Failed to create command allocator for {}", utility::narrow(name));
+        REVR_LOG(spdlog::error("[VR] Failed to create command allocator for {}", utility::narrow(name)));
         return false;
     }
 
@@ -28,14 +32,14 @@ bool CommandContext::setup(const wchar_t* name) {
 
     if (FAILED(device->CreateCommandList(
             0, D3D12_COMMAND_LIST_TYPE_DIRECT, this->cmd_allocator.Get(), nullptr, IID_PPV_ARGS(&this->cmd_list)))) {
-        spdlog::error("[VR] Failed to create command list for {}", utility::narrow(name));
+        REVR_LOG(spdlog::error("[VR] Failed to create command list for {}", utility::narrow(name)));
         return false;
     }
     
     this->cmd_list->SetName(name);
 
     if (FAILED(device->CreateFence(this->fence_value, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&this->fence)))) {
-        spdlog::error("[VR] Failed to create fence for {}", utility::narrow(name));
+        REVR_LOG(spdlog::error("[VR] Failed to create fence for {}", utility::narrow(name)));
         return false;
     }
 
@@ -63,17 +67,61 @@ void CommandContext::wait(uint32_t ms) {
     std::scoped_lock _{this->mtx};
 
 	if (this->fence_event && this->waiting_for_fence) {
+#if REVR_RELEASE
+        WaitForSingleObject(this->fence_event, ms); // [RELEASE SWITCH fix141] (the debug build also times the wait)
+#else
+        // [CPU 03.11.2026] how long the thread waits for the GPU to finish this list's previous work (periodic log)
+        const bool pending = this->fence != nullptr && this->fence->GetCompletedValue() < this->fence_value;
+        const auto t0 = pending ? cpustats::now_ns() : 0;
+
         WaitForSingleObject(this->fence_event, ms);
+
+        if (pending) {
+            const auto dt = (uint64_t)(std::max)(cpustats::now_ns() - t0, (int64_t)0);
+            auto& fw = cpustats::fence_waits();
+            fw.ns.fetch_add(dt, std::memory_order_relaxed);
+            fw.calls.fetch_add(1, std::memory_order_relaxed);
+
+            if (dt > 50'000) {
+                fw.long_waits.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+#endif
+
         ResetEvent(this->fence_event);
         this->waiting_for_fence = false;
         if (FAILED(this->cmd_allocator->Reset())) {
-            spdlog::error("[VR] Failed to reset command allocator for {}", utility::narrow(this->internal_name));
+            REVR_LOG(spdlog::error("[VR] Failed to reset command allocator for {}", utility::narrow(this->internal_name)));
         }
 
         if (FAILED(this->cmd_list->Reset(this->cmd_allocator.Get(), nullptr))) {
-            spdlog::error("[VR] Failed to reset command list for {}", utility::narrow(this->internal_name));
+            REVR_LOG(spdlog::error("[VR] Failed to reset command list for {}", utility::narrow(this->internal_name)));
         }
         this->has_commands = false;
+        this->unsubmitted_waits = 0;
+    } else if (this->has_commands && this->cmd_list != nullptr && this->cmd_allocator != nullptr) {
+        // [MENU HANG 14.11.2026] work recorded but not submitted since the last wait: the caller skipped execute(). Within a
+        // frame that can be intended (record, wait, record more), across several waits it means each frame adds to a list
+        // that is never submitted; submitted later in one piece, that list can run for seconds and hang the GPU. After a few
+        // such waits the recorded work is dropped and the list starts empty (the GPU finished everything before it).
+        if (++this->unsubmitted_waits >= 3) {
+            this->cmd_list->Close(); // may already be closed; the reset below works either way
+
+            if (FAILED(this->cmd_allocator->Reset())) {
+                REVR_LOG(spdlog::error("[VR] Failed to reset command allocator for {}", utility::narrow(this->internal_name)));
+            }
+
+            if (FAILED(this->cmd_list->Reset(this->cmd_allocator.Get(), nullptr))) {
+                REVR_LOG(spdlog::error("[VR] Failed to reset command list for {}", utility::narrow(this->internal_name)));
+            }
+
+            this->has_commands = false;
+            this->unsubmitted_waits = 0;
+
+            if (this->dropped_lists++ % 600 == 0) {
+                REVR_LOG(spdlog::warn("[VR] {}: recorded work was never submitted, dropped ({} time(s) so far)", this->tag_name, this->dropped_lists));
+            }
+        }
     }
 }
 
@@ -81,7 +129,7 @@ void CommandContext::copy(ID3D12Resource* src, ID3D12Resource* dst, D3D12_RESOUR
     std::scoped_lock _{this->mtx};
 
     if (src == nullptr || dst == nullptr) {
-        spdlog::error("[VR] nullptr passed to copy");
+        REVR_LOG(spdlog::error("[VR] nullptr passed to copy"));
         return;
     }
 
@@ -130,7 +178,7 @@ void CommandContext::copy_region(ID3D12Resource* src, ID3D12Resource* dst, D3D12
     std::scoped_lock _{this->mtx};
 
     if (src == nullptr || dst == nullptr) {
-        spdlog::error("[VR] nullptr passed to copy_region");
+        REVR_LOG(spdlog::error("[VR] nullptr passed to copy_region"));
         return;
     }
 
@@ -189,7 +237,7 @@ void CommandContext::clear_rtv(ID3D12Resource* dst, D3D12_CPU_DESCRIPTOR_HANDLE 
     std::scoped_lock _{this->mtx};
 
     if (dst == nullptr) {
-        spdlog::error("[VR] nullptr passed to clear_rtv");
+        REVR_LOG(spdlog::error("[VR] nullptr passed to clear_rtv"));
         return;
     }
 
@@ -236,17 +284,19 @@ void CommandContext::execute() {
     
     if (this->has_commands) {
         if (FAILED(this->cmd_list->Close())) {
-            spdlog::error("[VR] Failed to close command list. ({})", utility::narrow(this->internal_name));
+            REVR_LOG(spdlog::error("[VR] Failed to close command list. ({})", utility::narrow(this->internal_name)));
             return;
         }
         
         auto command_queue = g_framework->get_d3d12_hook()->get_command_queue();
         ID3D12CommandList* const cmd_lists[] = {this->cmd_list.Get()};
+        SubmitTimeline::Tag tag{this->tag_name.c_str()}; // [SUBMIT TIMELINE 06.11.2026]
         command_queue->ExecuteCommandLists(1, cmd_lists);
         command_queue->Signal(this->fence.Get(), ++this->fence_value);
         this->fence->SetEventOnCompletion(this->fence_value, this->fence_event);
         this->waiting_for_fence = true;
         this->has_commands = false;
+        this->unsubmitted_waits = 0;
     }
 }
 }

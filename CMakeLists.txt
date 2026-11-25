@@ -141,50 +141,7 @@ FetchContent_Declare(kananlib
 FetchContent_MakeAvailable(kananlib)
 
 
-# Target: pdperfmod
-if(REF_BUILD_DEPENDENCIES AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework-dependencies
-	set(pdperfmod_SOURCES
-		cmake.toml
-		"dependencies/pd-perfmod/dummy/PDPerfPlugin.cpp"
-	)
-
-	add_library(pdperfmod SHARED)
-
-	target_sources(pdperfmod PRIVATE ${pdperfmod_SOURCES})
-	source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${pdperfmod_SOURCES})
-
-	target_include_directories(pdperfmod PUBLIC
-		"dependencies/pd-perfmod/include"
-	)
-
-	set_target_properties(pdperfmod PROPERTIES
-		OUTPUT_NAME
-			PDPerfPlugin
-	)
-
-endif()
-# Target: pdafwmod
-if(REF_BUILD_DEPENDENCIES AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework-dependencies
-	set(pdafwmod_SOURCES
-		cmake.toml
-		"dependencies/pd-afwmod/dummy/PDAFWPlugin.cpp"
-	)
-
-	add_library(pdafwmod SHARED)
-
-	target_sources(pdafwmod PRIVATE ${pdafwmod_SOURCES})
-	source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${pdafwmod_SOURCES})
-
-	target_include_directories(pdafwmod PUBLIC
-		"dependencies/pd-afwmod/include"
-	)
-
-	set_target_properties(pdafwmod PROPERTIES
-		OUTPUT_NAME
-			PDAFWPlugin
-	)
-
-endif()
+# [NO PLUGIN fix91 19.11.2026] the target of the old upscaler plugin was here (see cmake.toml)
 # Target: spdlog
 if(REF_BUILD_DEPENDENCIES AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework-dependencies
 	set(spdlog_SOURCES
@@ -2205,6 +2162,8 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/ScriptRunner.hpp"
 		"src/mods/TemporalUpscaler.cpp"
 		"src/mods/TemporalUpscaler.hpp"
+		"src/mods/FoveatedRendering.cpp"
+		"src/mods/FoveatedRendering.hpp"
 		"src/mods/VR.cpp"
 		"src/mods/VR.hpp"
 		"src/mods/bindings/FS.cpp"
@@ -2240,6 +2199,31 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/vr/d3d12/ResourceCopier.hpp"
 		"src/mods/vr/d3d12/SharpenPass.cpp"
 		"src/mods/vr/d3d12/SharpenPass.hpp"
+		"src/mods/vr/EyeGaze.cpp"
+		"src/mods/vr/EyeGaze.hpp"
+		"src/mods/vr/GazeFilter.hpp"
+		"src/mods/vr/d3d12/FoveaComposite.cpp"
+		"src/mods/vr/d3d12/FoveaComposite.hpp"
+		"src/mods/vr/d3d12/EyeRecorder.cpp"
+		"src/mods/vr/d3d12/EyeRecorder.hpp"
+		"src/mods/vr/d3d12/GpuTimer.cpp"
+		"src/mods/vr/d3d12/GpuTimer.hpp"
+		"src/mods/vr/d3d12/FsrDirect.cpp"
+		"src/mods/vr/d3d12/FsrDirect.hpp"
+		"src/mods/vr/d3d12/SuperTAA.cpp"
+		"src/mods/vr/d3d12/SuperTAA.hpp"
+		"src/mods/vr/d3d12/SuperTAACapture.cpp"
+		"src/mods/vr/d3d12/SuperTAACapture.hpp"
+		"src/mods/vr/d3d12/SubmitTimeline.cpp"
+		"src/mods/vr/d3d12/SubmitTimeline.hpp"
+		"src/mods/vr/d3d12/GapLoad.cpp"
+		"src/mods/vr/d3d12/GapLoad.hpp"
+		"src/mods/vr/d3d12/TextureDump.cpp"
+		"src/mods/vr/d3d12/TextureDump.hpp"
+		"src/mods/vr/QuadView.hpp"
+		"src/mods/vr/QuadViewGame.hpp"
+		"src/mods/vr/SubmitMath.hpp"
+		"src/mods/vr/openvr_ext/IVRSystem_026.hpp"
 		"src/mods/vr/d3d12/TextureContext.cpp"
 		"src/mods/vr/d3d12/TextureContext.hpp"
 		"src/mods/vr/games/RE4VR.cpp"
@@ -2388,15 +2372,13 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
-		pdperfmod
-		pdafwmod
 	)
 
 	set_target_properties(RE2 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -2481,6 +2463,8 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/ScriptRunner.hpp"
 		"src/mods/TemporalUpscaler.cpp"
 		"src/mods/TemporalUpscaler.hpp"
+		"src/mods/FoveatedRendering.cpp"
+		"src/mods/FoveatedRendering.hpp"
 		"src/mods/VR.cpp"
 		"src/mods/VR.hpp"
 		"src/mods/bindings/FS.cpp"
@@ -2516,6 +2500,31 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/vr/d3d12/ResourceCopier.hpp"
 		"src/mods/vr/d3d12/SharpenPass.cpp"
 		"src/mods/vr/d3d12/SharpenPass.hpp"
+		"src/mods/vr/EyeGaze.cpp"
+		"src/mods/vr/EyeGaze.hpp"
+		"src/mods/vr/GazeFilter.hpp"
+		"src/mods/vr/d3d12/FoveaComposite.cpp"
+		"src/mods/vr/d3d12/FoveaComposite.hpp"
+		"src/mods/vr/d3d12/EyeRecorder.cpp"
+		"src/mods/vr/d3d12/EyeRecorder.hpp"
+		"src/mods/vr/d3d12/GpuTimer.cpp"
+		"src/mods/vr/d3d12/GpuTimer.hpp"
+		"src/mods/vr/d3d12/FsrDirect.cpp"
+		"src/mods/vr/d3d12/FsrDirect.hpp"
+		"src/mods/vr/d3d12/SuperTAA.cpp"
+		"src/mods/vr/d3d12/SuperTAA.hpp"
+		"src/mods/vr/d3d12/SuperTAACapture.cpp"
+		"src/mods/vr/d3d12/SuperTAACapture.hpp"
+		"src/mods/vr/d3d12/SubmitTimeline.cpp"
+		"src/mods/vr/d3d12/SubmitTimeline.hpp"
+		"src/mods/vr/d3d12/GapLoad.cpp"
+		"src/mods/vr/d3d12/GapLoad.hpp"
+		"src/mods/vr/d3d12/TextureDump.cpp"
+		"src/mods/vr/d3d12/TextureDump.hpp"
+		"src/mods/vr/QuadView.hpp"
+		"src/mods/vr/QuadViewGame.hpp"
+		"src/mods/vr/SubmitMath.hpp"
+		"src/mods/vr/openvr_ext/IVRSystem_026.hpp"
 		"src/mods/vr/d3d12/TextureContext.cpp"
 		"src/mods/vr/d3d12/TextureContext.hpp"
 		"src/mods/vr/games/RE4VR.cpp"
@@ -2664,15 +2673,13 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
-		pdperfmod
-		pdafwmod
 	)
 
 	set_target_properties(RE2_TDB66 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -4450,6 +4457,8 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/ScriptRunner.hpp"
 		"src/mods/TemporalUpscaler.cpp"
 		"src/mods/TemporalUpscaler.hpp"
+		"src/mods/FoveatedRendering.cpp"
+		"src/mods/FoveatedRendering.hpp"
 		"src/mods/VR.cpp"
 		"src/mods/VR.hpp"
 		"src/mods/bindings/FS.cpp"
@@ -4485,6 +4494,31 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/vr/d3d12/ResourceCopier.hpp"
 		"src/mods/vr/d3d12/SharpenPass.cpp"
 		"src/mods/vr/d3d12/SharpenPass.hpp"
+		"src/mods/vr/EyeGaze.cpp"
+		"src/mods/vr/EyeGaze.hpp"
+		"src/mods/vr/GazeFilter.hpp"
+		"src/mods/vr/d3d12/FoveaComposite.cpp"
+		"src/mods/vr/d3d12/FoveaComposite.hpp"
+		"src/mods/vr/d3d12/EyeRecorder.cpp"
+		"src/mods/vr/d3d12/EyeRecorder.hpp"
+		"src/mods/vr/d3d12/GpuTimer.cpp"
+		"src/mods/vr/d3d12/GpuTimer.hpp"
+		"src/mods/vr/d3d12/FsrDirect.cpp"
+		"src/mods/vr/d3d12/FsrDirect.hpp"
+		"src/mods/vr/d3d12/SuperTAA.cpp"
+		"src/mods/vr/d3d12/SuperTAA.hpp"
+		"src/mods/vr/d3d12/SuperTAACapture.cpp"
+		"src/mods/vr/d3d12/SuperTAACapture.hpp"
+		"src/mods/vr/d3d12/SubmitTimeline.cpp"
+		"src/mods/vr/d3d12/SubmitTimeline.hpp"
+		"src/mods/vr/d3d12/GapLoad.cpp"
+		"src/mods/vr/d3d12/GapLoad.hpp"
+		"src/mods/vr/d3d12/TextureDump.cpp"
+		"src/mods/vr/d3d12/TextureDump.hpp"
+		"src/mods/vr/QuadView.hpp"
+		"src/mods/vr/QuadViewGame.hpp"
+		"src/mods/vr/SubmitMath.hpp"
+		"src/mods/vr/openvr_ext/IVRSystem_026.hpp"
 		"src/mods/vr/d3d12/TextureContext.cpp"
 		"src/mods/vr/d3d12/TextureContext.hpp"
 		"src/mods/vr/games/RE4VR.cpp"
@@ -4633,15 +4667,13 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
-		pdperfmod
-		pdafwmod
 	)
 
 	set_target_properties(RE3 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -4726,6 +4758,8 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/ScriptRunner.hpp"
 		"src/mods/TemporalUpscaler.cpp"
 		"src/mods/TemporalUpscaler.hpp"
+		"src/mods/FoveatedRendering.cpp"
+		"src/mods/FoveatedRendering.hpp"
 		"src/mods/VR.cpp"
 		"src/mods/VR.hpp"
 		"src/mods/bindings/FS.cpp"
@@ -4761,6 +4795,31 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/vr/d3d12/ResourceCopier.hpp"
 		"src/mods/vr/d3d12/SharpenPass.cpp"
 		"src/mods/vr/d3d12/SharpenPass.hpp"
+		"src/mods/vr/EyeGaze.cpp"
+		"src/mods/vr/EyeGaze.hpp"
+		"src/mods/vr/GazeFilter.hpp"
+		"src/mods/vr/d3d12/FoveaComposite.cpp"
+		"src/mods/vr/d3d12/FoveaComposite.hpp"
+		"src/mods/vr/d3d12/EyeRecorder.cpp"
+		"src/mods/vr/d3d12/EyeRecorder.hpp"
+		"src/mods/vr/d3d12/GpuTimer.cpp"
+		"src/mods/vr/d3d12/GpuTimer.hpp"
+		"src/mods/vr/d3d12/FsrDirect.cpp"
+		"src/mods/vr/d3d12/FsrDirect.hpp"
+		"src/mods/vr/d3d12/SuperTAA.cpp"
+		"src/mods/vr/d3d12/SuperTAA.hpp"
+		"src/mods/vr/d3d12/SuperTAACapture.cpp"
+		"src/mods/vr/d3d12/SuperTAACapture.hpp"
+		"src/mods/vr/d3d12/SubmitTimeline.cpp"
+		"src/mods/vr/d3d12/SubmitTimeline.hpp"
+		"src/mods/vr/d3d12/GapLoad.cpp"
+		"src/mods/vr/d3d12/GapLoad.hpp"
+		"src/mods/vr/d3d12/TextureDump.cpp"
+		"src/mods/vr/d3d12/TextureDump.hpp"
+		"src/mods/vr/QuadView.hpp"
+		"src/mods/vr/QuadViewGame.hpp"
+		"src/mods/vr/SubmitMath.hpp"
+		"src/mods/vr/openvr_ext/IVRSystem_026.hpp"
 		"src/mods/vr/d3d12/TextureContext.cpp"
 		"src/mods/vr/d3d12/TextureContext.hpp"
 		"src/mods/vr/games/RE4VR.cpp"
@@ -4909,15 +4968,13 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
-		pdperfmod
-		pdafwmod
 	)
 
 	set_target_properties(RE3_TDB67 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -5002,6 +5059,8 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/ScriptRunner.hpp"
 		"src/mods/TemporalUpscaler.cpp"
 		"src/mods/TemporalUpscaler.hpp"
+		"src/mods/FoveatedRendering.cpp"
+		"src/mods/FoveatedRendering.hpp"
 		"src/mods/VR.cpp"
 		"src/mods/VR.hpp"
 		"src/mods/bindings/FS.cpp"
@@ -5037,6 +5096,31 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/vr/d3d12/ResourceCopier.hpp"
 		"src/mods/vr/d3d12/SharpenPass.cpp"
 		"src/mods/vr/d3d12/SharpenPass.hpp"
+		"src/mods/vr/EyeGaze.cpp"
+		"src/mods/vr/EyeGaze.hpp"
+		"src/mods/vr/GazeFilter.hpp"
+		"src/mods/vr/d3d12/FoveaComposite.cpp"
+		"src/mods/vr/d3d12/FoveaComposite.hpp"
+		"src/mods/vr/d3d12/EyeRecorder.cpp"
+		"src/mods/vr/d3d12/EyeRecorder.hpp"
+		"src/mods/vr/d3d12/GpuTimer.cpp"
+		"src/mods/vr/d3d12/GpuTimer.hpp"
+		"src/mods/vr/d3d12/FsrDirect.cpp"
+		"src/mods/vr/d3d12/FsrDirect.hpp"
+		"src/mods/vr/d3d12/SuperTAA.cpp"
+		"src/mods/vr/d3d12/SuperTAA.hpp"
+		"src/mods/vr/d3d12/SuperTAACapture.cpp"
+		"src/mods/vr/d3d12/SuperTAACapture.hpp"
+		"src/mods/vr/d3d12/SubmitTimeline.cpp"
+		"src/mods/vr/d3d12/SubmitTimeline.hpp"
+		"src/mods/vr/d3d12/GapLoad.cpp"
+		"src/mods/vr/d3d12/GapLoad.hpp"
+		"src/mods/vr/d3d12/TextureDump.cpp"
+		"src/mods/vr/d3d12/TextureDump.hpp"
+		"src/mods/vr/QuadView.hpp"
+		"src/mods/vr/QuadViewGame.hpp"
+		"src/mods/vr/SubmitMath.hpp"
+		"src/mods/vr/openvr_ext/IVRSystem_026.hpp"
 		"src/mods/vr/d3d12/TextureContext.cpp"
 		"src/mods/vr/d3d12/TextureContext.hpp"
 		"src/mods/vr/games/RE4VR.cpp"
@@ -5138,6 +5222,11 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 	target_sources(RE4 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources/re4_taunts.rc")
 	target_link_libraries(RE4 PRIVATE winmm)
 
+	# [MENU TEXT fix159 25.11.2026] Talemann's RE4VR mods (src/mods/vr/games/RE4VR*.cpp) stay as he wrote them: their
+	# menu widgets get the labels that fit the panel (menu_text, Mod.hpp) through this definition, set for those files only.
+	file(GLOB REVR_TALEMANN_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/mods/vr/games/RE4VR*.cpp")
+	set_source_files_properties(${REVR_TALEMANN_SOURCES} PROPERTIES COMPILE_DEFINITIONS "REVR_TALEMANN_MENU_TEXT")
+
 	target_compile_definitions(RE4 PUBLIC
 		${CMKR_TARGET}
 		REFRAMEWORK_EXPORTS
@@ -5192,15 +5281,13 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
-		pdperfmod
-		pdafwmod
 	)
 
 	set_target_properties(RE4 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -7826,6 +7913,8 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/ScriptRunner.hpp"
 		"src/mods/TemporalUpscaler.cpp"
 		"src/mods/TemporalUpscaler.hpp"
+		"src/mods/FoveatedRendering.cpp"
+		"src/mods/FoveatedRendering.hpp"
 		"src/mods/VR.cpp"
 		"src/mods/VR.hpp"
 		"src/mods/bindings/FS.cpp"
@@ -7861,6 +7950,31 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/vr/d3d12/ResourceCopier.hpp"
 		"src/mods/vr/d3d12/SharpenPass.cpp"
 		"src/mods/vr/d3d12/SharpenPass.hpp"
+		"src/mods/vr/EyeGaze.cpp"
+		"src/mods/vr/EyeGaze.hpp"
+		"src/mods/vr/GazeFilter.hpp"
+		"src/mods/vr/d3d12/FoveaComposite.cpp"
+		"src/mods/vr/d3d12/FoveaComposite.hpp"
+		"src/mods/vr/d3d12/EyeRecorder.cpp"
+		"src/mods/vr/d3d12/EyeRecorder.hpp"
+		"src/mods/vr/d3d12/GpuTimer.cpp"
+		"src/mods/vr/d3d12/GpuTimer.hpp"
+		"src/mods/vr/d3d12/FsrDirect.cpp"
+		"src/mods/vr/d3d12/FsrDirect.hpp"
+		"src/mods/vr/d3d12/SuperTAA.cpp"
+		"src/mods/vr/d3d12/SuperTAA.hpp"
+		"src/mods/vr/d3d12/SuperTAACapture.cpp"
+		"src/mods/vr/d3d12/SuperTAACapture.hpp"
+		"src/mods/vr/d3d12/SubmitTimeline.cpp"
+		"src/mods/vr/d3d12/SubmitTimeline.hpp"
+		"src/mods/vr/d3d12/GapLoad.cpp"
+		"src/mods/vr/d3d12/GapLoad.hpp"
+		"src/mods/vr/d3d12/TextureDump.cpp"
+		"src/mods/vr/d3d12/TextureDump.hpp"
+		"src/mods/vr/QuadView.hpp"
+		"src/mods/vr/QuadViewGame.hpp"
+		"src/mods/vr/SubmitMath.hpp"
+		"src/mods/vr/openvr_ext/IVRSystem_026.hpp"
 		"src/mods/vr/d3d12/TextureContext.cpp"
 		"src/mods/vr/d3d12/TextureContext.hpp"
 		"src/mods/vr/games/RE4VR.cpp"
@@ -8009,15 +8123,13 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
-		pdperfmod
-		pdafwmod
 	)
 
 	set_target_properties(RE7 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -8102,6 +8214,8 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/ScriptRunner.hpp"
 		"src/mods/TemporalUpscaler.cpp"
 		"src/mods/TemporalUpscaler.hpp"
+		"src/mods/FoveatedRendering.cpp"
+		"src/mods/FoveatedRendering.hpp"
 		"src/mods/VR.cpp"
 		"src/mods/VR.hpp"
 		"src/mods/bindings/FS.cpp"
@@ -8137,6 +8251,31 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/vr/d3d12/ResourceCopier.hpp"
 		"src/mods/vr/d3d12/SharpenPass.cpp"
 		"src/mods/vr/d3d12/SharpenPass.hpp"
+		"src/mods/vr/EyeGaze.cpp"
+		"src/mods/vr/EyeGaze.hpp"
+		"src/mods/vr/GazeFilter.hpp"
+		"src/mods/vr/d3d12/FoveaComposite.cpp"
+		"src/mods/vr/d3d12/FoveaComposite.hpp"
+		"src/mods/vr/d3d12/EyeRecorder.cpp"
+		"src/mods/vr/d3d12/EyeRecorder.hpp"
+		"src/mods/vr/d3d12/GpuTimer.cpp"
+		"src/mods/vr/d3d12/GpuTimer.hpp"
+		"src/mods/vr/d3d12/FsrDirect.cpp"
+		"src/mods/vr/d3d12/FsrDirect.hpp"
+		"src/mods/vr/d3d12/SuperTAA.cpp"
+		"src/mods/vr/d3d12/SuperTAA.hpp"
+		"src/mods/vr/d3d12/SuperTAACapture.cpp"
+		"src/mods/vr/d3d12/SuperTAACapture.hpp"
+		"src/mods/vr/d3d12/SubmitTimeline.cpp"
+		"src/mods/vr/d3d12/SubmitTimeline.hpp"
+		"src/mods/vr/d3d12/GapLoad.cpp"
+		"src/mods/vr/d3d12/GapLoad.hpp"
+		"src/mods/vr/d3d12/TextureDump.cpp"
+		"src/mods/vr/d3d12/TextureDump.hpp"
+		"src/mods/vr/QuadView.hpp"
+		"src/mods/vr/QuadViewGame.hpp"
+		"src/mods/vr/SubmitMath.hpp"
+		"src/mods/vr/openvr_ext/IVRSystem_026.hpp"
 		"src/mods/vr/d3d12/TextureContext.cpp"
 		"src/mods/vr/d3d12/TextureContext.hpp"
 		"src/mods/vr/games/RE4VR.cpp"
@@ -8285,15 +8424,13 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
-		pdperfmod
-		pdafwmod
 	)
 
 	set_target_properties(RE7_TDB49 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -9226,6 +9363,8 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/ScriptRunner.hpp"
 		"src/mods/TemporalUpscaler.cpp"
 		"src/mods/TemporalUpscaler.hpp"
+		"src/mods/FoveatedRendering.cpp"
+		"src/mods/FoveatedRendering.hpp"
 		"src/mods/VR.cpp"
 		"src/mods/VR.hpp"
 		"src/mods/bindings/FS.cpp"
@@ -9261,6 +9400,31 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/vr/d3d12/ResourceCopier.hpp"
 		"src/mods/vr/d3d12/SharpenPass.cpp"
 		"src/mods/vr/d3d12/SharpenPass.hpp"
+		"src/mods/vr/EyeGaze.cpp"
+		"src/mods/vr/EyeGaze.hpp"
+		"src/mods/vr/GazeFilter.hpp"
+		"src/mods/vr/d3d12/FoveaComposite.cpp"
+		"src/mods/vr/d3d12/FoveaComposite.hpp"
+		"src/mods/vr/d3d12/EyeRecorder.cpp"
+		"src/mods/vr/d3d12/EyeRecorder.hpp"
+		"src/mods/vr/d3d12/GpuTimer.cpp"
+		"src/mods/vr/d3d12/GpuTimer.hpp"
+		"src/mods/vr/d3d12/FsrDirect.cpp"
+		"src/mods/vr/d3d12/FsrDirect.hpp"
+		"src/mods/vr/d3d12/SuperTAA.cpp"
+		"src/mods/vr/d3d12/SuperTAA.hpp"
+		"src/mods/vr/d3d12/SuperTAACapture.cpp"
+		"src/mods/vr/d3d12/SuperTAACapture.hpp"
+		"src/mods/vr/d3d12/SubmitTimeline.cpp"
+		"src/mods/vr/d3d12/SubmitTimeline.hpp"
+		"src/mods/vr/d3d12/GapLoad.cpp"
+		"src/mods/vr/d3d12/GapLoad.hpp"
+		"src/mods/vr/d3d12/TextureDump.cpp"
+		"src/mods/vr/d3d12/TextureDump.hpp"
+		"src/mods/vr/QuadView.hpp"
+		"src/mods/vr/QuadViewGame.hpp"
+		"src/mods/vr/SubmitMath.hpp"
+		"src/mods/vr/openvr_ext/IVRSystem_026.hpp"
 		"src/mods/vr/d3d12/TextureContext.cpp"
 		"src/mods/vr/d3d12/TextureContext.hpp"
 		"src/mods/vr/games/RE4VR.cpp"
@@ -9409,15 +9573,13 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
-		pdperfmod
-		pdafwmod
 	)
 
 	set_target_properties(RE8 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -10348,6 +10510,8 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/ScriptRunner.hpp"
 		"src/mods/TemporalUpscaler.cpp"
 		"src/mods/TemporalUpscaler.hpp"
+		"src/mods/FoveatedRendering.cpp"
+		"src/mods/FoveatedRendering.hpp"
 		"src/mods/VR.cpp"
 		"src/mods/VR.hpp"
 		"src/mods/bindings/FS.cpp"
@@ -10383,6 +10547,31 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/vr/d3d12/ResourceCopier.hpp"
 		"src/mods/vr/d3d12/SharpenPass.cpp"
 		"src/mods/vr/d3d12/SharpenPass.hpp"
+		"src/mods/vr/EyeGaze.cpp"
+		"src/mods/vr/EyeGaze.hpp"
+		"src/mods/vr/GazeFilter.hpp"
+		"src/mods/vr/d3d12/FoveaComposite.cpp"
+		"src/mods/vr/d3d12/FoveaComposite.hpp"
+		"src/mods/vr/d3d12/EyeRecorder.cpp"
+		"src/mods/vr/d3d12/EyeRecorder.hpp"
+		"src/mods/vr/d3d12/GpuTimer.cpp"
+		"src/mods/vr/d3d12/GpuTimer.hpp"
+		"src/mods/vr/d3d12/FsrDirect.cpp"
+		"src/mods/vr/d3d12/FsrDirect.hpp"
+		"src/mods/vr/d3d12/SuperTAA.cpp"
+		"src/mods/vr/d3d12/SuperTAA.hpp"
+		"src/mods/vr/d3d12/SuperTAACapture.cpp"
+		"src/mods/vr/d3d12/SuperTAACapture.hpp"
+		"src/mods/vr/d3d12/SubmitTimeline.cpp"
+		"src/mods/vr/d3d12/SubmitTimeline.hpp"
+		"src/mods/vr/d3d12/GapLoad.cpp"
+		"src/mods/vr/d3d12/GapLoad.hpp"
+		"src/mods/vr/d3d12/TextureDump.cpp"
+		"src/mods/vr/d3d12/TextureDump.hpp"
+		"src/mods/vr/QuadView.hpp"
+		"src/mods/vr/QuadViewGame.hpp"
+		"src/mods/vr/SubmitMath.hpp"
+		"src/mods/vr/openvr_ext/IVRSystem_026.hpp"
 		"src/mods/vr/d3d12/TextureContext.cpp"
 		"src/mods/vr/d3d12/TextureContext.hpp"
 		"src/mods/vr/games/RE4VR.cpp"
@@ -10531,15 +10720,13 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
-		pdperfmod
-		pdafwmod
 	)
 
 	set_target_properties(DMC5 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -11472,6 +11659,8 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/ScriptRunner.hpp"
 		"src/mods/TemporalUpscaler.cpp"
 		"src/mods/TemporalUpscaler.hpp"
+		"src/mods/FoveatedRendering.cpp"
+		"src/mods/FoveatedRendering.hpp"
 		"src/mods/VR.cpp"
 		"src/mods/VR.hpp"
 		"src/mods/bindings/FS.cpp"
@@ -11507,6 +11696,31 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/vr/d3d12/ResourceCopier.hpp"
 		"src/mods/vr/d3d12/SharpenPass.cpp"
 		"src/mods/vr/d3d12/SharpenPass.hpp"
+		"src/mods/vr/EyeGaze.cpp"
+		"src/mods/vr/EyeGaze.hpp"
+		"src/mods/vr/GazeFilter.hpp"
+		"src/mods/vr/d3d12/FoveaComposite.cpp"
+		"src/mods/vr/d3d12/FoveaComposite.hpp"
+		"src/mods/vr/d3d12/EyeRecorder.cpp"
+		"src/mods/vr/d3d12/EyeRecorder.hpp"
+		"src/mods/vr/d3d12/GpuTimer.cpp"
+		"src/mods/vr/d3d12/GpuTimer.hpp"
+		"src/mods/vr/d3d12/FsrDirect.cpp"
+		"src/mods/vr/d3d12/FsrDirect.hpp"
+		"src/mods/vr/d3d12/SuperTAA.cpp"
+		"src/mods/vr/d3d12/SuperTAA.hpp"
+		"src/mods/vr/d3d12/SuperTAACapture.cpp"
+		"src/mods/vr/d3d12/SuperTAACapture.hpp"
+		"src/mods/vr/d3d12/SubmitTimeline.cpp"
+		"src/mods/vr/d3d12/SubmitTimeline.hpp"
+		"src/mods/vr/d3d12/GapLoad.cpp"
+		"src/mods/vr/d3d12/GapLoad.hpp"
+		"src/mods/vr/d3d12/TextureDump.cpp"
+		"src/mods/vr/d3d12/TextureDump.hpp"
+		"src/mods/vr/QuadView.hpp"
+		"src/mods/vr/QuadViewGame.hpp"
+		"src/mods/vr/SubmitMath.hpp"
+		"src/mods/vr/openvr_ext/IVRSystem_026.hpp"
 		"src/mods/vr/d3d12/TextureContext.cpp"
 		"src/mods/vr/d3d12/TextureContext.hpp"
 		"src/mods/vr/games/RE4VR.cpp"
@@ -11655,15 +11869,13 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
-		pdperfmod
-		pdafwmod
 	)
 
 	set_target_properties(MHRISE PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -12596,6 +12808,8 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/ScriptRunner.hpp"
 		"src/mods/TemporalUpscaler.cpp"
 		"src/mods/TemporalUpscaler.hpp"
+		"src/mods/FoveatedRendering.cpp"
+		"src/mods/FoveatedRendering.hpp"
 		"src/mods/VR.cpp"
 		"src/mods/VR.hpp"
 		"src/mods/bindings/FS.cpp"
@@ -12631,6 +12845,31 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/vr/d3d12/ResourceCopier.hpp"
 		"src/mods/vr/d3d12/SharpenPass.cpp"
 		"src/mods/vr/d3d12/SharpenPass.hpp"
+		"src/mods/vr/EyeGaze.cpp"
+		"src/mods/vr/EyeGaze.hpp"
+		"src/mods/vr/GazeFilter.hpp"
+		"src/mods/vr/d3d12/FoveaComposite.cpp"
+		"src/mods/vr/d3d12/FoveaComposite.hpp"
+		"src/mods/vr/d3d12/EyeRecorder.cpp"
+		"src/mods/vr/d3d12/EyeRecorder.hpp"
+		"src/mods/vr/d3d12/GpuTimer.cpp"
+		"src/mods/vr/d3d12/GpuTimer.hpp"
+		"src/mods/vr/d3d12/FsrDirect.cpp"
+		"src/mods/vr/d3d12/FsrDirect.hpp"
+		"src/mods/vr/d3d12/SuperTAA.cpp"
+		"src/mods/vr/d3d12/SuperTAA.hpp"
+		"src/mods/vr/d3d12/SuperTAACapture.cpp"
+		"src/mods/vr/d3d12/SuperTAACapture.hpp"
+		"src/mods/vr/d3d12/SubmitTimeline.cpp"
+		"src/mods/vr/d3d12/SubmitTimeline.hpp"
+		"src/mods/vr/d3d12/GapLoad.cpp"
+		"src/mods/vr/d3d12/GapLoad.hpp"
+		"src/mods/vr/d3d12/TextureDump.cpp"
+		"src/mods/vr/d3d12/TextureDump.hpp"
+		"src/mods/vr/QuadView.hpp"
+		"src/mods/vr/QuadViewGame.hpp"
+		"src/mods/vr/SubmitMath.hpp"
+		"src/mods/vr/openvr_ext/IVRSystem_026.hpp"
 		"src/mods/vr/d3d12/TextureContext.cpp"
 		"src/mods/vr/d3d12/TextureContext.hpp"
 		"src/mods/vr/games/RE4VR.cpp"
@@ -12779,15 +13018,13 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
-		pdperfmod
-		pdafwmod
 	)
 
 	set_target_properties(SF6 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -13720,6 +13957,8 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/ScriptRunner.hpp"
 		"src/mods/TemporalUpscaler.cpp"
 		"src/mods/TemporalUpscaler.hpp"
+		"src/mods/FoveatedRendering.cpp"
+		"src/mods/FoveatedRendering.hpp"
 		"src/mods/VR.cpp"
 		"src/mods/VR.hpp"
 		"src/mods/bindings/FS.cpp"
@@ -13755,6 +13994,31 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/vr/d3d12/ResourceCopier.hpp"
 		"src/mods/vr/d3d12/SharpenPass.cpp"
 		"src/mods/vr/d3d12/SharpenPass.hpp"
+		"src/mods/vr/EyeGaze.cpp"
+		"src/mods/vr/EyeGaze.hpp"
+		"src/mods/vr/GazeFilter.hpp"
+		"src/mods/vr/d3d12/FoveaComposite.cpp"
+		"src/mods/vr/d3d12/FoveaComposite.hpp"
+		"src/mods/vr/d3d12/EyeRecorder.cpp"
+		"src/mods/vr/d3d12/EyeRecorder.hpp"
+		"src/mods/vr/d3d12/GpuTimer.cpp"
+		"src/mods/vr/d3d12/GpuTimer.hpp"
+		"src/mods/vr/d3d12/FsrDirect.cpp"
+		"src/mods/vr/d3d12/FsrDirect.hpp"
+		"src/mods/vr/d3d12/SuperTAA.cpp"
+		"src/mods/vr/d3d12/SuperTAA.hpp"
+		"src/mods/vr/d3d12/SuperTAACapture.cpp"
+		"src/mods/vr/d3d12/SuperTAACapture.hpp"
+		"src/mods/vr/d3d12/SubmitTimeline.cpp"
+		"src/mods/vr/d3d12/SubmitTimeline.hpp"
+		"src/mods/vr/d3d12/GapLoad.cpp"
+		"src/mods/vr/d3d12/GapLoad.hpp"
+		"src/mods/vr/d3d12/TextureDump.cpp"
+		"src/mods/vr/d3d12/TextureDump.hpp"
+		"src/mods/vr/QuadView.hpp"
+		"src/mods/vr/QuadViewGame.hpp"
+		"src/mods/vr/SubmitMath.hpp"
+		"src/mods/vr/openvr_ext/IVRSystem_026.hpp"
 		"src/mods/vr/d3d12/TextureContext.cpp"
 		"src/mods/vr/d3d12/TextureContext.hpp"
 		"src/mods/vr/games/RE4VR.cpp"
@@ -13903,15 +14167,13 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
-		pdperfmod
-		pdafwmod
 	)
 
 	set_target_properties(DD2 PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO
@@ -14844,6 +15106,8 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/ScriptRunner.hpp"
 		"src/mods/TemporalUpscaler.cpp"
 		"src/mods/TemporalUpscaler.hpp"
+		"src/mods/FoveatedRendering.cpp"
+		"src/mods/FoveatedRendering.hpp"
 		"src/mods/VR.cpp"
 		"src/mods/VR.hpp"
 		"src/mods/bindings/FS.cpp"
@@ -14879,6 +15143,31 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		"src/mods/vr/d3d12/ResourceCopier.hpp"
 		"src/mods/vr/d3d12/SharpenPass.cpp"
 		"src/mods/vr/d3d12/SharpenPass.hpp"
+		"src/mods/vr/EyeGaze.cpp"
+		"src/mods/vr/EyeGaze.hpp"
+		"src/mods/vr/GazeFilter.hpp"
+		"src/mods/vr/d3d12/FoveaComposite.cpp"
+		"src/mods/vr/d3d12/FoveaComposite.hpp"
+		"src/mods/vr/d3d12/EyeRecorder.cpp"
+		"src/mods/vr/d3d12/EyeRecorder.hpp"
+		"src/mods/vr/d3d12/GpuTimer.cpp"
+		"src/mods/vr/d3d12/GpuTimer.hpp"
+		"src/mods/vr/d3d12/FsrDirect.cpp"
+		"src/mods/vr/d3d12/FsrDirect.hpp"
+		"src/mods/vr/d3d12/SuperTAA.cpp"
+		"src/mods/vr/d3d12/SuperTAA.hpp"
+		"src/mods/vr/d3d12/SuperTAACapture.cpp"
+		"src/mods/vr/d3d12/SuperTAACapture.hpp"
+		"src/mods/vr/d3d12/SubmitTimeline.cpp"
+		"src/mods/vr/d3d12/SubmitTimeline.hpp"
+		"src/mods/vr/d3d12/GapLoad.cpp"
+		"src/mods/vr/d3d12/GapLoad.hpp"
+		"src/mods/vr/d3d12/TextureDump.cpp"
+		"src/mods/vr/d3d12/TextureDump.hpp"
+		"src/mods/vr/QuadView.hpp"
+		"src/mods/vr/QuadViewGame.hpp"
+		"src/mods/vr/SubmitMath.hpp"
+		"src/mods/vr/openvr_ext/IVRSystem_026.hpp"
 		"src/mods/vr/d3d12/TextureContext.cpp"
 		"src/mods/vr/d3d12/TextureContext.hpp"
 		"src/mods/vr/games/RE4VR.cpp"
@@ -15027,15 +15316,13 @@ if(REF_BUILD_FRAMEWORK AND CMAKE_SIZEOF_VOID_P EQUAL 8) # build-framework
 		delayimp
 		DirectXTK
 		DirectXTK12
-		pdperfmod
-		pdafwmod
 	)
 
 	set_target_properties(MHWILDS PROPERTIES
 		OUTPUT_NAME
 			dinput8
 		LINK_FLAGS
-			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+			"/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 		RUNTIME_OUTPUT_DIRECTORY_RELEASE
 			"${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO

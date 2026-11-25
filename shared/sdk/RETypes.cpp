@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <spdlog/spdlog.h>
 
 #include "utility/Scan.hpp"
@@ -47,7 +48,7 @@ std::string& game_namespace(std::string_view base_name)
 }
 
 RETypes::RETypes() {
-    spdlog::info("RETypes initialization");
+    REVR_LOG(spdlog::info("RETypes initialization"));
 
     // RE2, RE3, RE8, DMC5
     auto pat = "48 8d 0d ? ? ? ? e8 ? ? ? ? 48 8d 05 ? ? ? ? 48 89 03";
@@ -65,7 +66,7 @@ RETypes::RETypes() {
         const auto via_object_ref = utility::scan(mod, "BA 55 FD 09 D2");
 
         if (!via_object_ref) {
-            spdlog::error("Failed to find via object ref");
+            REVR_LOG(spdlog::error("Failed to find via object ref"));
             fill_types_from_tdb();
             return;
         }
@@ -104,7 +105,7 @@ RETypes::RETypes() {
 
                     if (t->name != nullptr && (std::string_view{t->name} == "via.clr.ManagedObject" || std::string_view{t->name} == "via.Object")) {
                         m_raw_types = potential_types;
-                        spdlog::info("Found TypeList: {:x} at ref {:x}", (uintptr_t)m_raw_types, ctx.addr);
+                        REVR_LOG(spdlog::info("Found TypeList: {:x} at ref {:x}", (uintptr_t)m_raw_types, ctx.addr));
                         break;
                     }
                 } catch(...) {
@@ -129,17 +130,17 @@ RETypes::RETypes() {
         const auto typeinfo_none_ref = utility::scan(mod, pat);
 
         if (!typeinfo_none_ref) {
-            spdlog::error("Failed to find TypeInfoNone");
+            REVR_LOG(spdlog::error("Failed to find TypeInfoNone"));
 
             const auto alternative_pat = "48 8B 0D ? ? ? ? 8B F0 48 85 C9 74 ? E8 ? ? ? ?";
             const auto alternative_ref = utility::scan(mod, alternative_pat);
 
             if (alternative_ref) {
-                spdlog::info("Found alternative reference for type list");
+                REVR_LOG(spdlog::info("Found alternative reference for type list"));
                 m_raw_types = (TypeList*)utility::calculate_absolute(*alternative_ref + 3);
                 refresh_map();
             } else {
-                spdlog::info("Could not find alternative reference for types, filling types from TDB instead");
+                REVR_LOG(spdlog::info("Could not find alternative reference for types, filling types from TDB instead"));
                 fill_types_from_tdb();
             }
             
@@ -149,7 +150,7 @@ RETypes::RETypes() {
         const auto add_type_ref = utility::scan(*typeinfo_none_ref, 0x100, "48 8B CB E8 ? ? ? ?");
 
         if (!add_type_ref) {
-            spdlog::error("Failed to find add_type_ref");
+            REVR_LOG(spdlog::error("Failed to find add_type_ref"));
             fill_types_from_tdb();
             return;
         }
@@ -157,7 +158,7 @@ RETypes::RETypes() {
         const auto add_type_fn = utility::calculate_absolute(*add_type_ref + 4);
 
         if (!add_type_fn) {
-            spdlog::error("Failed to calculate add_type_fn");
+            REVR_LOG(spdlog::error("Failed to calculate add_type_fn"));
             fill_types_from_tdb();
             return;
         }
@@ -165,7 +166,7 @@ RETypes::RETypes() {
         ref = utility::scan(add_type_fn, 0x200, "4C 8B 05 ? ? ? ?");
 
         if (!ref) {
-            spdlog::error("Bad RETypes ref");
+            REVR_LOG(spdlog::error("Bad RETypes ref"));
             fill_types_from_tdb();
             return;
         }
@@ -175,10 +176,10 @@ RETypes::RETypes() {
 #endif
     }
 
-    spdlog::info("Initial ref: {:x}", (uintptr_t)*ref);
+    REVR_LOG(spdlog::info("Initial ref: {:x}", (uintptr_t)*ref));
     
     m_raw_types = (TypeList*)(utility::calculate_absolute(*ref + types_offset));
-    spdlog::info("Initial TypeList: {:x}", (uintptr_t)m_raw_types);
+    REVR_LOG(spdlog::info("Initial TypeList: {:x}", (uintptr_t)m_raw_types));
 
     const auto start = (uintptr_t)utility::get_executable();
     const auto module_size = utility::get_module_size(mod);
@@ -197,8 +198,8 @@ RETypes::RETypes() {
 
             // Log the potential type if it's not already in the map
             if (references.find(potential_types_ptr) != references.end()) {
-                spdlog::info("Potential ref: {:x}", (uintptr_t)*i);
-                spdlog::info("Potential TypeList: {:x}", (uintptr_t)potential_types_ptr);
+                REVR_LOG(spdlog::info("Potential ref: {:x}", (uintptr_t)*i));
+                REVR_LOG(spdlog::info("Potential TypeList: {:x}", (uintptr_t)potential_types_ptr));
             }
 
             references[potential_types_ptr]++;
@@ -213,17 +214,17 @@ RETypes::RETypes() {
         }
 
         if (!found_something) {
-            spdlog::error("Couldn't find TypeList");
+            REVR_LOG(spdlog::error("Couldn't find TypeList"));
             return;
         }
 
-        spdlog::info("Settled on ref: {:x}", *ref);
-        spdlog::info("Settled on TypeList: {:x}", (uintptr_t)m_raw_types);
+        REVR_LOG(spdlog::info("Settled on ref: {:x}", *ref));
+        REVR_LOG(spdlog::info("Settled on TypeList: {:x}", (uintptr_t)m_raw_types));
     }
 
     refresh_map();
 
-    spdlog::info("Finished RETypes initialization");
+    REVR_LOG(spdlog::info("Finished RETypes initialization"));
 }
 
 sdk::RETypeDB* RETypes::get_type_db() const {
@@ -275,7 +276,7 @@ void RETypes::fill_types_from_tdb() {
         return;
     }
     
-    spdlog::info("Filling types from TDB");
+    REVR_LOG(spdlog::info("Filling types from TDB"));
 
     for (auto i = 0; i < tdb->get_num_types(); ++i) {
         auto t = tdb->get_type(i);
@@ -295,7 +296,7 @@ void RETypes::fill_types_from_tdb() {
         m_type_list.push_back(t->get_type());
     }
 
-    spdlog::info("filled {} types from TDB", m_types.size());
+    REVR_LOG(spdlog::info("filled {} types from TDB", m_types.size()));
 }
 
 void RETypes::refresh_map() {
@@ -327,7 +328,7 @@ void RETypes::refresh_map() {
 
         if (m_types.count(t) == 0) {
             if (i < 100) {
-                spdlog::info("{:s}", name);
+                REVR_LOG(spdlog::info("{:s}", name));
             }
             m_types.insert(t);
             m_type_list.push_back(t);

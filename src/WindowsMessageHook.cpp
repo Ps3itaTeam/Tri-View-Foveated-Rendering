@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <unordered_map>
 #include <vector>
 
@@ -38,7 +39,7 @@ WindowsMessageHook::WindowsMessageHook(HWND wnd)
     m_original_proc{ nullptr }
 {
     std::lock_guard _{ g_proc_mutex };
-    spdlog::info("Initializing WindowsMessageHook");
+    REVR_LOG(spdlog::info("Initializing WindowsMessageHook"));
 
     utility::ThreadSuspender suspender{};
 
@@ -50,12 +51,12 @@ WindowsMessageHook::WindowsMessageHook(HWND wnd)
     // Set it to our "hook" procedure.
     SetWindowLongPtr(m_wnd, GWLP_WNDPROC, (LONG_PTR)&window_proc);
 
-    spdlog::info("Hooked Windows message handler");
+    REVR_LOG(spdlog::info("Hooked Windows message handler"));
 }
 
 WindowsMessageHook::~WindowsMessageHook() {
     std::lock_guard _{ g_proc_mutex };
-    spdlog::info("Destroying WindowsMessageHook");
+    REVR_LOG(spdlog::info("Destroying WindowsMessageHook"));
 
     utility::ThreadSuspender suspender{};
 

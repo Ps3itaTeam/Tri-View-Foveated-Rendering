@@ -35,6 +35,7 @@ public:
     void on_config_load(const utility::Config& cfg) override;
     void on_config_save(utility::Config& cfg) override;
 
+    bool wants_transform_hooks() const override { return true; } // [CPU 03.11.2026] its transform callbacks place the first-person camera (RE2/RE3): see Mod::wants_transform_hooks
     void on_pre_update_transform(RETransform* transform) override;
     void on_update_transform(RETransform* transform) override;
     void on_update_camera_controller(RopewayPlayerCameraController* controller) override;
@@ -159,7 +160,11 @@ private:
     
     //std::unique_ptr<Patch> m_disableVignettePatch{};
 
+#if defined(RE2)
+    const ModToggle::Ptr m_enabled{ ModToggle::create(generate_name("Enabled"), true) }; // [fix144 23.11.2026] RE2: on (the user's configuration)
+#else
     const ModToggle::Ptr m_enabled{ ModToggle::create(generate_name("Enabled")) };
+#endif
     const ModKey::Ptr m_toggle_key{ ModKey::create(generate_name("ToggleKey")) };
     void on_disabled();
     bool m_wants_disable{false};
@@ -176,7 +181,12 @@ private:
     const ModToggle::Ptr m_disable_light_source{ ModToggle::create(generate_name("DisableLightSource"), true) };
     const ModToggle::Ptr m_show_in_cutscenes{ ModToggle::create(generate_name("ShowInCutscenes"), false) };
     const ModToggle::Ptr m_rotate_body{ ModToggle::create(generate_name("RotateBody"), true) };
+#if defined(RE2) // [fix155 24.11.2026] RE2: the most (the user's test): the body turns back under the view at once when moving
+                 // sideways, instead of standing in the view
+    const ModSlider::Ptr m_body_rotate_speed{ ModSlider::create(generate_name("BodyRotateSpeed"), 0.01f, 5.0f, 5.0f) };
+#else
     const ModSlider::Ptr m_body_rotate_speed{ ModSlider::create(generate_name("BodyRotateSpeed"), 0.01f, 5.0f, 0.3f) };
+#endif
 
     const ModSlider::Ptr m_fov_offset{ ModSlider::create(generate_name("FOVOffset"), -100.0f, 100.0f, 10.0f) };
     const ModSlider::Ptr m_fov_mult{ ModSlider::create(generate_name("FOVMultiplier"), 0.0f, 2.0f, 1.0f) };

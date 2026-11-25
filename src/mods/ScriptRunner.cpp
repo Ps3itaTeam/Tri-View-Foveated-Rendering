@@ -2,6 +2,10 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <algorithm>
+#include <cctype>
+#include <optional>
 
 #include <imgui.h>
 
@@ -17,6 +21,7 @@
 #include <utility/ScopeGuard.hpp>
 
 #include "Mods.hpp"
+#include "REFrameworkConfig.hpp" // [FOREIGN CONFIG 12.11.2026]
 
 #include "bindings/Sdk.hpp"
 #include "bindings/ImGui.hpp"
@@ -28,6 +33,7 @@
 
 #include <lstate.h> // weird include order because of sol
 #include <lgc.h>
+#include "mods/vr/ReleaseBuild.hpp" // [RELEASE SWITCH fix140] REVR_RELEASE
 
 namespace api::re {
 void msg(const char* text) {
@@ -37,21 +43,23 @@ void msg(const char* text) {
 
 namespace api::log {
 void info(const char* str) {
-    spdlog::info(str);
+    REVR_LOG(spdlog::info(str));
 }
 
 void warn(const char* str) {
-    spdlog::warn(str);
+    REVR_LOG(spdlog::warn(str));
 }
 
 void error(const char* str) {
-    spdlog::error(str);
+    REVR_LOG(spdlog::error(str));
 }
 
 void debug(const char* str) {
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] debugger and console output: debug build only
     OutputDebugString(str);
     fprintf(stderr, "%s\n", str);
-    spdlog::debug(str);
+#endif
+    REVR_LOG(spdlog::debug(str));
 }
 }
 
@@ -116,6 +124,263 @@ std::string get_build_time() {
 }
 }
 
+// ============================================================================================================
+// [FOREIGN CONFIG 12.11.2026] Plugins that rewrite the framework's settings from Lua.
+// RE7VR Reloaded's re7_vr_settings_overlay.dll registers the global "vr_settings_overlay" and lets its scripts write
+// re2_fw_config.txt (fw_write_config_keys), patch live settings in memory (fw_patch_bool/int/float, through the
+// objects handed over by fw_bind_roots) and force the upscale method of the old upscaler plugin's next set-up
+// (fw_set_upscale_method, DLSS when it finds nothing better). On this build that turns an AMD card to DLSS and crashes
+// the game at start, and the in-memory patches assume another framework's object layout. Those entries are replaced
+// with functions that change nothing and return false (the scripts treat that as "not available"); everything else
+// the plugin offers is left alone. The settings stay in this framework's own menu.
+// ============================================================================================================
+namespace foreign_config {
+constexpr const char* GLOBAL_NAME = "vr_settings_overlay";
+constexpr const char* GUARD_KEY = "__revr_foreign_config_guard";
+constexpr const char* STUB_KEY = "__revr_foreign_config_stub";
+
+constexpr const char* BLOCKED[9] = {
+    "fw_write_config_keys",
+    "fw_patch_bool",
+    "fw_patch_int",
+    "fw_patch_float",
+    "fw_set_upscale_method",
+    "fw_get_forced_upscale_method",
+    "fw_list_upscale_methods",
+    "fw_bind_roots",
+    "has_pd_upscaler",
+};
+
+// Called before the scripts run, before each script and once per frame: the plugin may register its table at any
+// time, or register it again.
+void guard(sol::state_view lua) try {
+    // a plain table on the globals: raw_get on sol's global_table reads the wrong stack slot
+    sol::table globals = lua.globals();
+    sol::object api = globals.raw_get<sol::object>(GLOBAL_NAME);
+    const auto type = api.get_type();
+
+    if (type != sol::type::table && type != sol::type::userdata) {
+        return;
+    }
+
+    // one stub per state (a Lua function, so that a name already replaced is recognised by identity)
+    sol::object stub = lua.registry()[STUB_KEY];
+
+    if (!stub.valid() || stub.get_type() != sol::type::function) {
+        auto made = lua.load("return function() return false end");
+
+        if (!made.valid()) {
+            return;
+        }
+
+        sol::protected_function make = made;
+        auto result = make();
+
+        if (!result.valid()) {
+            return;
+        }
+
+        stub = result.get<sol::object>();
+        lua.registry()[STUB_KEY] = stub;
+    }
+
+    if (type == sol::type::table) {
+        // checked every time: the plugin may add or put back its functions later
+        auto table = api.as<sol::table>();
+        int replaced = 0;
+
+        for (const auto* name : BLOCKED) {
+            sol::object current = table.raw_get<sol::object>(name);
+
+            if (current.valid() && current.get_type() != sol::type::lua_nil && current.pointer() != stub.pointer()) {
+                table.raw_set(name, stub);
+                ++replaced;
+            }
+        }
+
+        if (replaced > 0) {
+            REVR_LOG(spdlog::warn("[ScriptRunner] RE7VR Reloaded settings plugin found: {} config/upscaler functions disabled, "
+                         "{} keeps its own values", replaced, REFrameworkConfig::REFRAMEWORK_CONFIG_NAME));
+        }
+
+        return;
+    }
+
+    sol::object done = lua.registry()[GUARD_KEY];
+
+    if (done.valid() && done.get_type() == sol::type::table && done.pointer() == api.pointer()) {
+        return;
+    }
+
+    // a userdata cannot be edited: the global becomes a table that forwards everything except the blocked names
+    auto made_proxy = lua.load(R"(
+        local args = { ... }
+        local orig, stub = args[1], args[2]
+        local blocked = {}
+        for i = 3, #args do blocked[args[i]] = true end
+        return setmetatable({}, {
+            __index = function(_, k)
+                if blocked[k] then return stub end
+                return orig[k]
+            end,
+            __newindex = function(_, k, v) orig[k] = v end,
+        }))");
+
+    if (!made_proxy.valid()) {
+        return;
+    }
+
+    sol::protected_function make_proxy = made_proxy;
+    auto result = make_proxy(api, stub, BLOCKED[0], BLOCKED[1], BLOCKED[2], BLOCKED[3], BLOCKED[4], BLOCKED[5], BLOCKED[6],
+                             BLOCKED[7], BLOCKED[8]);
+
+    if (!result.valid()) {
+        return;
+    }
+
+    sol::object guarded = result.get<sol::object>();
+    globals.raw_set(GLOBAL_NAME, guarded);
+
+    REVR_LOG(spdlog::warn("[ScriptRunner] RE7VR Reloaded settings plugin found (userdata): config/upscaler functions disabled, "
+                 "{} keeps its own values", REFrameworkConfig::REFRAMEWORK_CONFIG_NAME));
+
+    lua.registry()[GUARD_KEY] = guarded;
+} catch (const std::exception& e) {
+    REVR_LOG(spdlog::error("[ScriptRunner] foreign config guard: {}", e.what()));
+} catch (...) {
+    REVR_LOG(spdlog::error("[ScriptRunner] foreign config guard: unknown error"));
+}
+
+// [RELOADED MENU 15.11.2026] RE7VR Reloaded's settings panel reads its switches' state from this framework's config file
+// with io.open (its own framework opens Lua's io library; this one does not): without it its "VR Display" page showed
+// built-in defaults, and changing anything in the panel set all of them, e.g. the camera pitch option off. A read-only
+// io.open for the config file of this framework alone (any folder: the panel looks in several), nothing else. The
+// panel's names differ for one option: VR_DecoupledPitch (here VR_DecoupledPitch_V2) is added under its name.
+std::optional<std::string> config_text() {
+    std::ifstream f{(REFramework::get_persistent_dir() / REFrameworkConfig::REFRAMEWORK_CONFIG_NAME.data()).string(), std::ios::binary};
+
+    if (!f) {
+        return std::nullopt;
+    }
+
+    std::string text{std::istreambuf_iterator<char>{f}, std::istreambuf_iterator<char>{}};
+    const auto value_of = [&](std::string_view key) -> std::optional<std::string> {
+        size_t at = 0;
+
+        while ((at = text.find(key, at)) != std::string::npos) {
+            const bool line_start = at == 0 || text[at - 1] == '\n';
+            const size_t eq = at + key.size();
+
+            if (line_start && eq < text.size() && text[eq] == '=') {
+                const size_t end = text.find_first_of("\r\n", eq + 1);
+                return text.substr(eq + 1, end == std::string::npos ? std::string::npos : end - eq - 1);
+            }
+
+            at = eq;
+        }
+
+        return std::nullopt;
+    };
+
+    if (!value_of("VR_DecoupledPitch")) {
+        if (const auto v = value_of("VR_DecoupledPitch_V2")) {
+            if (!text.empty() && text.back() != '\n') {
+                text += '\n';
+            }
+
+            text += "VR_DecoupledPitch=" + *v + "\n";
+        }
+    }
+
+    return text;
+}
+
+void install_read_only_io(sol::state_view lua) try {
+    sol::table globals = lua.globals();
+
+    if (globals.raw_get<sol::object>("io").get_type() != sol::type::lua_nil) {
+        return; // a real io library: left as it is
+    }
+
+    auto made = lua.load(R"(
+        local read_cfg, cfg_name = ...
+        local function file_of(text)
+            local pos = 1
+            local f = {}
+            function f:read(fmt)
+                fmt = fmt or "l"
+                if type(fmt) == "number" then
+                    if pos > #text then return nil end
+                    local r = text:sub(pos, pos + fmt - 1)
+                    pos = pos + fmt
+                    return r
+                end
+                fmt = tostring(fmt):gsub("^%*", "")
+                if fmt == "a" then
+                    local r = text:sub(pos)
+                    pos = #text + 1
+                    return r
+                end
+                if fmt == "l" or fmt == "L" then
+                    if pos > #text then return nil end
+                    local s, e = text:find("\n", pos, true)
+                    local line
+                    if s then
+                        line = text:sub(pos, fmt == "L" and e or s - 1)
+                        pos = e + 1
+                    else
+                        line = text:sub(pos)
+                        pos = #text + 1
+                    end
+                    return line
+                end
+                return nil
+            end
+            function f:lines() return function() return f:read("l") end end
+            function f:write() return nil, "read only" end
+            function f:seek() return pos - 1 end
+            function f:close() return true end
+            return f
+        end
+        return {
+            open = function(path, mode)
+                mode = mode or "r"
+                if mode ~= "r" and mode ~= "rb" then return nil, "read only" end
+                local p = tostring(path):gsub("/", "\\")
+                local base = p:match("([^\\]+)$") or p
+                if base:lower() ~= cfg_name then return nil, "not available" end
+                local text = read_cfg()
+                if text == nil then return nil, "not found" end
+                return file_of(text)
+            end,
+        })");
+
+    if (!made.valid()) {
+        return;
+    }
+
+    sol::protected_function make = made;
+    std::function<sol::object(sol::this_state)> read = [](sol::this_state s) -> sol::object {
+        if (auto text = config_text()) {
+            return sol::make_object(s, *text);
+        }
+
+        return sol::lua_nil;
+    };
+    std::string name{REFrameworkConfig::REFRAMEWORK_CONFIG_NAME};
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    auto result = make(read, name);
+
+    if (result.valid()) {
+        globals.raw_set("io", result.get<sol::object>());
+    }
+} catch (const std::exception& e) {
+    REVR_LOG(spdlog::error("[ScriptRunner] read-only io: {}", e.what()));
+} catch (...) {
+    REVR_LOG(spdlog::error("[ScriptRunner] read-only io: unknown error"));
+}
+} // namespace foreign_config
+
 ScriptState::ScriptState(const ScriptState::GarbageCollectionData& gc_data,bool is_main_state) {
     std::scoped_lock _{ m_execution_mutex };
     m_is_main_state = is_main_state;
@@ -138,6 +403,8 @@ ScriptState::ScriptState(const ScriptState::GarbageCollectionData& gc_data,bool 
     auto debug = m_lua["debug"];
     debug["getregistry"] = sol::nil;
 
+    foreign_config::install_read_only_io(m_lua); // [RELOADED MENU 15.11.2026]
+
     bindings::open_sdk(this);
     bindings::open_imgui(this);
     bindings::open_json(this);
@@ -145,10 +412,10 @@ ScriptState::ScriptState(const ScriptState::GarbageCollectionData& gc_data,bool 
 
     auto re = m_lua.create_table();
     re["msg"] = api::re::msg;
-    re["on_pre_application_entry"] = [this](const char* name, sol::function fn) { m_pre_application_entry_fns.emplace(utility::hash(name), fn); };
-    re["on_application_entry"] = [this](const char* name, sol::function fn) { m_application_entry_fns.emplace(utility::hash(name), fn); };
-    re["on_pre_gui_draw_element"] = [this](sol::function fn) { m_pre_gui_draw_element_fns.emplace_back(fn); };
-    re["on_gui_draw_element"] = [this](sol::function fn) { m_gui_draw_element_fns.emplace_back(fn); };
+    re["on_pre_application_entry"] = [this](const char* name, sol::function fn) { m_pre_application_entry_fns.emplace(utility::hash(name), fn); ++s_entry_fns; };
+    re["on_application_entry"] = [this](const char* name, sol::function fn) { m_application_entry_fns.emplace(utility::hash(name), fn); ++s_entry_fns; };
+    re["on_pre_gui_draw_element"] = [this](sol::function fn) { m_pre_gui_draw_element_fns.emplace_back(fn); ++s_gui_fns; };
+    re["on_gui_draw_element"] = [this](sol::function fn) { m_gui_draw_element_fns.emplace_back(fn); ++s_gui_fns; };
     re["on_draw_ui"] = [this](sol::function fn) { m_on_draw_ui_fns.emplace_back(fn); };
     re["on_frame"] = [this](sol::function fn) { m_on_frame_fns.emplace_back(fn); };
     re["on_script_reset"] = [this](sol::function fn) { m_on_script_reset_fns.emplace_back(fn); };
@@ -426,12 +693,17 @@ ScriptState::~ScriptState() {
             g_hookman.remove(fn, id);
         }
     }
+
+    // [CPU 04.11.2026] this state's callbacks leave the counts (see s_gui_fns)
+    s_gui_fns -= (int64_t)(m_pre_gui_draw_element_fns.size() + m_gui_draw_element_fns.size());
+    s_entry_fns -= (int64_t)(m_pre_application_entry_fns.size() + m_application_entry_fns.size());
 }
 
 void ScriptState::run_script(const std::string& p) {
     std::scoped_lock _{ m_execution_mutex };
+    foreign_config::guard(m_lua); // [FOREIGN CONFIG 12.11.2026]
 
-    spdlog::info("[ScriptState] Running script {}...", p);
+    REVR_LOG(spdlog::info("[ScriptState] Running script {}...", p));
 
     m_lua["package"]["path"] = m_lua.registry()["package_path"];
     m_lua["package"]["cpath"] = m_lua.registry()["package_cpath"];
@@ -481,6 +753,10 @@ sol::protected_function_result ScriptState::handle_protected_result(sol::protect
 void ScriptState::on_frame() {
     try {
         std::scoped_lock _{ m_execution_mutex };
+
+        if (m_is_main_state) {
+            foreign_config::guard(m_lua); // [FOREIGN CONFIG 12.11.2026]
+        }
 
         for (auto& fn : m_on_frame_fns) {
             handle_protected_result(fn());
@@ -988,7 +1264,7 @@ void ScriptRunner::on_frame() {
         // Just bail out of this if 5 seconds have passed and we still haven't found the scene or scene manager.
         if (std::chrono::system_clock::now() - m_scene_check_time > std::chrono::seconds(5)) {
             m_scene_okay = true;
-            spdlog::warn("[ScriptRunner] Scene or scene manager not found after 5 seconds. Loading scripts anyways...");
+            REVR_LOG(spdlog::warn("[ScriptRunner] Scene or scene manager not found after 5 seconds. Loading scripts anyways..."));
             return;
         }
 
@@ -1022,12 +1298,12 @@ void ScriptRunner::on_frame() {
         }
 
         m_scene_okay = true;
-        spdlog::info("[ScriptRunner] Scene and scene manager found. Loading scripts...");
+        REVR_LOG(spdlog::info("[ScriptRunner] Scene and scene manager found. Loading scripts..."));
     } catch (const std::exception& e) {
-        spdlog::error("[ScriptRunner] Error while checking for scene: {}", e.what());
+        REVR_LOG(spdlog::error("[ScriptRunner] Error while checking for scene: {}", e.what()));
         return;
     } catch (...) {
-        spdlog::error("[ScriptRunner] Unknown error while checking for scene.");
+        REVR_LOG(spdlog::error("[ScriptRunner] Unknown error while checking for scene."));
         return;
     }
 
@@ -1043,13 +1319,13 @@ void ScriptRunner::on_frame() {
     m_last_online_match_state = sdk::sf6::is_online_match();
 
     if (m_needs_first_reset) {
-        spdlog::info("[ScriptRunner] Initializing Lua state for the first time...");
+        REVR_LOG(spdlog::info("[ScriptRunner] Initializing Lua state for the first time..."));
 
         // Calling reset_scripts even though the scripts have never been set yet still works.
         reset_scripts();
         m_needs_first_reset = false;
 
-        spdlog::info("[ScriptRunner] Lua state initialized.");
+        REVR_LOG(spdlog::info("[ScriptRunner] Lua state initialized."));
     }
 
     // [SCRIPTGATE] Angeforderter Reset aus Lua. Hier ist er sicher: wir sind
@@ -1059,7 +1335,7 @@ void ScriptRunner::on_frame() {
     if (m_needs_reset_request) {
         m_needs_reset_request = false;
 
-        spdlog::info("[ScriptRunner] Reset requested from Lua -- reloading scripts.");
+        REVR_LOG(spdlog::info("[ScriptRunner] Reset requested from Lua -- reloading scripts."));
         reset_scripts();
         return;
     }
@@ -1138,6 +1414,7 @@ void ScriptRunner::draw_scripts_tree(bool framed) {
             reset_scripts();
         }
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix140] developer tool: debug build only
         ImGui::SameLine();
 
         if (ImGui::Button("Spawn Debug Console")) {
@@ -1150,6 +1427,7 @@ void ScriptRunner::draw_scripts_tree(bool framed) {
                 m_console_spawned = true;
             }
         }
+#endif
         //Garbage collection currently only showing from main lua state, might rework to show total later?
         if (ImGui::TreeNode("Garbage Collection Stats")) {
             std::scoped_lock _{ m_access_mutex };
@@ -1198,7 +1476,9 @@ void ScriptRunner::draw_scripts_tree(bool framed) {
             }
         }
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] a log file: debug build only
         m_log_to_disk->draw("Log Lua Errors to Disk");
+#endif
 
         if (!m_last_script_error.empty()) {
             std::shared_lock _{m_script_error_mutex};
@@ -1273,6 +1553,11 @@ void ScriptRunner::on_update_transform(RETransform* transform) {
 }
 
 void ScriptRunner::on_pre_application_entry(void* entry, const char* name, size_t hash) {
+    // [CPU 04.11.2026] no script registered an entry callback: nothing to call (see ScriptState::s_entry_fns)
+    if (ScriptState::s_entry_fns.load(std::memory_order_acquire) <= 0) {
+        return;
+    }
+
     std::scoped_lock _{ m_access_mutex };
 
     if (m_states.empty()) {
@@ -1289,6 +1574,11 @@ void ScriptRunner::on_pre_application_entry(void* entry, const char* name, size_
 }
 
 void ScriptRunner::on_application_entry(void* entry, const char* name, size_t hash) {
+    // [CPU 04.11.2026] as above; EndRendering always goes on (the states' garbage collection runs there)
+    if (hash != "EndRendering"_fnv && ScriptState::s_entry_fns.load(std::memory_order_acquire) <= 0) {
+        return;
+    }
+
     std::scoped_lock _{ m_access_mutex };
 
     if (m_states.empty()) {
@@ -1305,6 +1595,13 @@ void ScriptRunner::on_application_entry(void* entry, const char* name, size_t ha
 }
 
 bool ScriptRunner::on_pre_gui_draw_element(REComponent* gui_element, void* primitive_context) {
+    // [CPU 04.11.2026] no script registered a GUI element callback: nothing to call, and the lock (taken by every Lua
+    // access of the mods, on every thread) is left alone. The fight timeline of 04.11.2026 had this callback at 7-16 us per
+    // element with no script loaded: waiting for that lock while the GUI is drawn on the main thread and two workers.
+    if (ScriptState::s_gui_fns.load(std::memory_order_acquire) <= 0) {
+        return true;
+    }
+
     std::scoped_lock _{ m_access_mutex };
 
     if (m_last_online_match_state) {
@@ -1327,6 +1624,11 @@ bool ScriptRunner::on_pre_gui_draw_element(REComponent* gui_element, void* primi
 }
 
 void ScriptRunner::on_gui_draw_element(REComponent* gui_element, void* primitive_context) {
+    // [CPU 04.11.2026] see on_pre_gui_draw_element
+    if (ScriptState::s_gui_fns.load(std::memory_order_acquire) <= 0) {
+        return;
+    }
+
     std::scoped_lock _{ m_access_mutex };
 
     if (m_last_online_match_state) {
@@ -1343,6 +1645,7 @@ void ScriptRunner::on_gui_draw_element(REComponent* gui_element, void* primitive
 }
 
 void ScriptRunner::spew_error(const std::string& p) {
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] debugger and console output, the error log file: debug build only
     OutputDebugString(p.c_str());
 
     if (m_console_spawned) {
@@ -1350,8 +1653,9 @@ void ScriptRunner::spew_error(const std::string& p) {
     }
 
     if (m_log_to_disk->value()) {
-        spdlog::error(p);
+        REVR_LOG(spdlog::error(p));
     }
+#endif
 
     std::unique_lock _{ m_script_error_mutex };
     m_last_script_error = p;
@@ -1450,6 +1754,8 @@ void ScriptRunner::reset_scripts() {
         mod->on_lua_state_created(m_main_state->lua());
     }
 
+    foreign_config::guard(m_main_state->lua()); // [FOREIGN CONFIG 12.11.2026]
+
     m_loaded_scripts.clear();
     m_known_scripts.clear();
 
@@ -1457,14 +1763,14 @@ void ScriptRunner::reset_scripts() {
 
     module_path.resize(1024, 0);
     module_path.resize(GetModuleFileName(nullptr, module_path.data(), module_path.size()));
-    spdlog::info("[ScriptRunner] Module path {}", module_path);
+    REVR_LOG(spdlog::info("[ScriptRunner] Module path {}", module_path));
 
     // Load from the reframework/autorun directory.
     const auto autorun_path = REFramework::get_persistent_dir() / "reframework" / "autorun";
 
-    spdlog::info("[ScriptRunner] Creating directories {}", autorun_path.string());
+    REVR_LOG(spdlog::info("[ScriptRunner] Creating directories {}", autorun_path.string()));
     std::filesystem::create_directories(autorun_path);
-    spdlog::info("[ScriptRunner] Loading scripts...");
+    REVR_LOG(spdlog::info("[ScriptRunner] Loading scripts..."));
 
     std::string old_path = m_main_state->lua()["package"]["path"];
 

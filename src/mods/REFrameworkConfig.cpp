@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include "../REFramework.hpp"
 
 #include "REFrameworkConfig.hpp"
@@ -51,7 +52,7 @@ bool re4_exe_is_1590_or_newer() {
     const uint32_t minor = LOWORD(ffi->dwFileVersionMS);
     const uint32_t build = HIWORD(ffi->dwFileVersionLS);
 
-    spdlog::info("[RE4] Exe-Version: {}.{}.{}", major, minor, build);
+    REVR_LOG(spdlog::info("[RE4] Exe-Version: {}.{}.{}", major, minor, build));
 
     // Vergleich als eine Zahl, damit 1.10.x nicht faelschlich kleiner als 1.5.x wirkt.
     const uint64_t have = ((uint64_t)major << 32) | ((uint64_t)minor << 16) | build;
@@ -122,9 +123,9 @@ void REFrameworkConfig::on_config_load(const utility::Config& cfg) {
 
     sdk::renderer::g_re4_new_texture_layout = use_new_layout;
 
-    spdlog::info("[RE4] Texturlayout: {} (Schalter {})",
+    REVR_LOG(spdlog::info("[RE4] Texturlayout: {} (Schalter {})",
                  use_new_layout ? "ab 1.5.9.0" : "bis 1.1.1.0",
-                 layout_mode < 0 ? "automatisch" : (layout_mode != 0 ? "1 erzwungen" : "0 erzwungen"));
+                 layout_mode < 0 ? "automatisch" : (layout_mode != 0 ? "1 erzwungen" : "0 erzwungen")));
 #endif
 }
 

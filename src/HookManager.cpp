@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <ranges>
 
 #include <hde64.h>
@@ -39,7 +40,7 @@ void* get_actual_function(void* possible_fn) {
     }
 
     if (possible_fn != actual_fn) {
-        spdlog::info("[HookManager] Using actual function @ {:p} for wrapper function @ {:p}", actual_fn, possible_fn);
+        REVR_LOG(spdlog::info("[HookManager] Using actual function @ {:p} for wrapper function @ {:p}", actual_fn, possible_fn));
     }
 
     return actual_fn;
@@ -70,18 +71,22 @@ HookManager::PreHookResult HookManager::HookedFn::on_pre_hook() {
         // if we're not already in a pre-hook.
         this->access_mux.lock_shared();
     } else if (!storage->pre_warned_recursion) {
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
         const auto tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
         const auto declaring_type = fn_def->get_declaring_type();
         const auto decltype_name = declaring_type != nullptr ? declaring_type->get_full_name() : "unknownclass";
-        spdlog::warn("[HookManager] (Pre) Recursive hook detected for '{}.{}' (thread ID: {:x})", decltype_name, fn_def->get_name(), tid);
+        REVR_LOG(spdlog::warn("[HookManager] (Pre) Recursive hook detected for '{}.{}' (thread ID: {:x})", decltype_name, fn_def->get_name(), tid));
+#endif
         storage->pre_warned_recursion = true;
     }
 
     if (storage->overall_depth > 0 && !storage->overall_warned_recursion) {
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
         const auto tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
         const auto declaring_type = fn_def->get_declaring_type();
         const auto decltype_name = declaring_type != nullptr ? declaring_type->get_full_name() : "unknownclass";
-        spdlog::warn("[HookManager] (Overall) '{}.{}' appears to be calling itself in some way (thread ID: {:x})", decltype_name, fn_def->get_name(), tid);
+        REVR_LOG(spdlog::warn("[HookManager] (Overall) '{}.{}' appears to be calling itself in some way (thread ID: {:x})", decltype_name, fn_def->get_name(), tid));
+#endif
         storage->overall_warned_recursion = true;
     }
 
@@ -116,10 +121,12 @@ void HookManager::HookedFn::on_post_hook() {
         // if we're not already in a post-hook.
         this->access_mux.lock_shared();
     } else if (!storage->post_warned_recursion) {
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
         const auto tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
         const auto declaring_type = fn_def->get_declaring_type();
         const auto decltype_name = declaring_type != nullptr ? declaring_type->get_full_name() : "unknownclass";
-        spdlog::warn("[HookManager] (Post) Recursive hook detected for '{}.{}' (thread ID: {:x})", decltype_name, fn_def->get_name(), tid);
+        REVR_LOG(spdlog::warn("[HookManager] (Post) Recursive hook detected for '{}.{}' (thread ID: {:x})", decltype_name, fn_def->get_name(), tid));
+#endif
         storage->post_warned_recursion = true;
     }
 
@@ -543,37 +550,37 @@ void HookManager::create_jitted_facilitator(std::unique_ptr<HookManager::HookedF
 HookManager::HookId HookManager::add(sdk::REMethodDefinition* fn, HookManager::PreHookFn pre_fn, HookManager::PostHookFn post_fn, bool ignore_jmp) {
     if (fn == nullptr) {
         //throw std::exception{"[HookManager] Cannot add nullptr function"};
-        spdlog::error("[HookManager] Cannot add nullptr function");
+        REVR_LOG(spdlog::error("[HookManager] Cannot add nullptr function"));
         return HookId{};
     }
     
     auto target_fn = ignore_jmp ? fn->get_function() : detail::get_actual_function(fn->get_function());
 
     if (target_fn == nullptr) {
-        spdlog::error("[HookManager] Cannot add method that resolves to nullptr");
+        REVR_LOG(spdlog::error("[HookManager] Cannot add method that resolves to nullptr"));
         return HookId{};
     }
 
-    spdlog::info("[HookManager] Adding hook for '{}' @ {:p}...", fn->get_name(), target_fn);
+    REVR_LOG(spdlog::info("[HookManager] Adding hook for '{}' @ {:p}...", fn->get_name(), target_fn));
 
     if (auto search = m_hooked_fns.find(fn); search != m_hooked_fns.end()) {
-        spdlog::info("[HookManager] Reusing existing hook...");
+        REVR_LOG(spdlog::info("[HookManager] Reusing existing hook..."));
 
         auto& hook = search->second;
         std::scoped_lock _{hook->mux};
         std::unique_lock __{hook->access_mux};
         auto hook_id = m_next_hook_id++;
 
-        spdlog::info("[HookManager] Hook assigned ID {}", hook_id);
+        REVR_LOG(spdlog::info("[HookManager] Hook assigned ID {}", hook_id));
 
         hook->cbs.emplace_back(hook_id, std::move(pre_fn), std::move(post_fn));
 
-        spdlog::info("[HookManager] Hook {} added for '{}' @ {:p}", hook_id, fn->get_name(), target_fn);
+        REVR_LOG(spdlog::info("[HookManager] Hook {} added for '{}' @ {:p}", hook_id, fn->get_name(), target_fn));
 
         return hook_id;
     }
 
-    spdlog::info("[HookManager] Creating a new hook...");
+    REVR_LOG(spdlog::info("[HookManager] Creating a new hook..."));
 
     auto hook = std::make_unique<HookedFn>(*this);
     hook->fn_def = fn;
@@ -581,7 +588,7 @@ HookManager::HookId HookManager::add(sdk::REMethodDefinition* fn, HookManager::P
 
     auto hook_id = m_next_hook_id++;
 
-    spdlog::info("[HookManager] Hook assigned ID {}", hook_id);
+    REVR_LOG(spdlog::info("[HookManager] Hook assigned ID {}", hook_id));
 
     hook->target_fn = target_fn;
     hook->cbs.emplace_back(hook_id, std::move(pre_fn), std::move(post_fn));
@@ -598,7 +605,7 @@ HookManager::HookId HookManager::add(sdk::REMethodDefinition* fn, HookManager::P
         [&](){
             fn_hook = std::make_unique<FunctionHook>(hook->target_fn, (void*)hook->facilitator_fn);
             if (!fn_hook->create()) {
-                spdlog::error("[HookManager] Failed to hook function for '{}'", fn->get_name());
+                REVR_LOG(spdlog::error("[HookManager] Failed to hook function for '{}'", fn->get_name()));
                 return uintptr_t{0};
             }
             return fn_hook->get_original();
@@ -609,7 +616,7 @@ HookManager::HookId HookManager::add(sdk::REMethodDefinition* fn, HookManager::P
 
     m_hooked_fns.emplace(fn, std::move(hook));
 
-    spdlog::info("[HookManager] Hook {} added for '{}' @ {:p}", hook_id, fn->get_name(), target_fn);
+    REVR_LOG(spdlog::info("[HookManager] Hook {} added for '{}' @ {:p}", hook_id, fn->get_name(), target_fn));
 
     return hook_id;
 }
@@ -625,23 +632,23 @@ HookManager::HookId HookManager::add_vtable(::REManagedObject* obj, sdk::REMetho
 
     if (fn == nullptr) {
         //throw std::exception{"[HookManager] Cannot add nullptr function"};
-        spdlog::error("[HookManager] Cannot add nullptr function");
+        REVR_LOG(spdlog::error("[HookManager] Cannot add nullptr function"));
         return HookId{};
     }
     
-    spdlog::info("[HookManager] Adding hook for '{}' @ {:p} (vtable index {})...", fn->get_name(), fn->get_function(), fn->get_virtual_index());
+    REVR_LOG(spdlog::info("[HookManager] Adding hook for '{}' @ {:p} (vtable index {})...", fn->get_name(), fn->get_function(), fn->get_virtual_index()));
 
     if (fn->get_virtual_index() == -1) {
-        spdlog::error("[HookManager] Cannot add non-virtual function with add_vtable, use add instead.");
+        REVR_LOG(spdlog::error("[HookManager] Cannot add non-virtual function with add_vtable, use add instead."));
         return HookId{};
     }
 
     auto search = m_hooked_vtables.find(obj);
 
     if (search != m_hooked_vtables.end()) {
-        spdlog::info("[HookManager] Reusing existing VT hook...");
+        REVR_LOG(spdlog::info("[HookManager] Reusing existing VT hook..."));
     } else {
-        spdlog::info("[HookManager] Creating a new VT hook...");
+        REVR_LOG(spdlog::info("[HookManager] Creating a new VT hook..."));
 
         auto hook = std::make_unique<HookManager::HookedVTable>(*this);
         std::scoped_lock _{hook->mux};
@@ -649,7 +656,7 @@ HookManager::HookId HookManager::add_vtable(::REManagedObject* obj, sdk::REMetho
         hook->vtable_hook = std::make_unique<sdk::REVTableHook>(obj);
 
         if (!hook->vtable_hook->is_hooked()) {
-            spdlog::error("[HookManager] Failed to hook vtable for {:x}", (uintptr_t)obj);
+            REVR_LOG(spdlog::error("[HookManager] Failed to hook vtable for {:x}", (uintptr_t)obj));
             hook = nullptr;
             return 0;
         }
@@ -657,7 +664,7 @@ HookManager::HookId HookManager::add_vtable(::REManagedObject* obj, sdk::REMetho
         m_hooked_vtables[obj] = std::move(hook);
         search = m_hooked_vtables.find(obj);
 
-        spdlog::info("[HookManager] VT hook created for {:x}", (uintptr_t)obj);
+        REVR_LOG(spdlog::info("[HookManager] VT hook created for {:x}", (uintptr_t)obj));
     }
 
     auto& hook = search->second;
@@ -666,7 +673,7 @@ HookManager::HookId HookManager::add_vtable(::REManagedObject* obj, sdk::REMetho
 
     // Now we need to find or create an existing function hook for the individual vtable method inside the vtable
     if (auto it = hook->hooked_fns.find(fn); it != hook->hooked_fns.end()) {
-        spdlog::info("[HookManager] Reusing existing VT hook...");
+        REVR_LOG(spdlog::info("[HookManager] Reusing existing VT hook..."));
 
         auto& hook_fn = it->second;
 
@@ -675,12 +682,12 @@ HookManager::HookId HookManager::add_vtable(::REManagedObject* obj, sdk::REMetho
         auto hook_id = m_next_hook_id++;
         hook_fn->cbs.emplace_back(hook_id, std::move(pre_fn), std::move(post_fn));
 
-        spdlog::info("[HookManager] VT Hook {} added for '{}' @ {:p}", hook_id, fn->get_name(), fn->get_function());
+        REVR_LOG(spdlog::info("[HookManager] VT Hook {} added for '{}' @ {:p}", hook_id, fn->get_name(), fn->get_function()));
 
         return hook_id;
     }
 
-    spdlog::info("[HookManager] Creating a new VT hook...");
+    REVR_LOG(spdlog::info("[HookManager] Creating a new VT hook..."));
 
     hook->hooked_fns[fn] = std::make_unique<HookedFn>(*this);
 
@@ -689,7 +696,7 @@ HookManager::HookId HookManager::add_vtable(::REManagedObject* obj, sdk::REMetho
     hook_fn->next_hook_id = m_next_hook_id++;
     auto hook_id = m_next_hook_id++;
 
-    spdlog::info("[HookManager] VT Hook assigned ID {}", hook_id);
+    REVR_LOG(spdlog::info("[HookManager] VT Hook assigned ID {}", hook_id));
 
     hook_fn->target_fn = fn->get_function();
     hook_fn->cbs.emplace_back(hook_id, std::move(pre_fn), std::move(post_fn));
@@ -704,7 +711,7 @@ HookManager::HookId HookManager::add_vtable(::REManagedObject* obj, sdk::REMetho
     create_jitted_facilitator(hook_fn, fn,
         [&]() -> uintptr_t {
             if (!hook->vtable_hook->hook_method(fn->get_virtual_index(), (void*)hook_fn->facilitator_fn)) {
-                spdlog::error("[HookManager] Failed to hook vtable method for {:x}", (uintptr_t)obj);
+                REVR_LOG(spdlog::error("[HookManager] Failed to hook vtable method for {:x}", (uintptr_t)obj));
                 hook_fn = nullptr;
                 return 0;
             }
@@ -716,14 +723,14 @@ HookManager::HookId HookManager::add_vtable(::REManagedObject* obj, sdk::REMetho
         }
     );
 
-    spdlog::info("[HookManager] VT Hook {} added for '{}' @ {:p}", hook_id, fn->get_name(), fn->get_function());
+    REVR_LOG(spdlog::info("[HookManager] VT Hook {} added for '{}' @ {:p}", hook_id, fn->get_name(), fn->get_function()));
 
     return hook_id;
 }
 
 void HookManager::remove(sdk::REMethodDefinition* fn, HookId id) {
     if (auto search = m_hooked_fns.find(fn); search != m_hooked_fns.end()) {
-        spdlog::info("[HookManager] Removing hook ID {} from '{}'", id, fn->get_name());
+        REVR_LOG(spdlog::info("[HookManager] Removing hook ID {} from '{}'", id, fn->get_name()));
 
         auto& hook = search->second;
         auto& cbs = hook->cbs;
@@ -738,7 +745,7 @@ void HookManager::remove(sdk::REMethodDefinition* fn, HookId id) {
             auto& hook = it.second;
 
             if (auto search = hook->hooked_fns.find(fn); search != hook->hooked_fns.end()) {
-                spdlog::info("[HookManager] Removing VT method hook ID {} from '{}'", id, fn->get_name());
+                REVR_LOG(spdlog::info("[HookManager] Removing VT method hook ID {} from '{}'", id, fn->get_name()));
 
                 auto& hook_fn = search->second;
                 auto& cbs = hook_fn->cbs;
@@ -753,7 +760,7 @@ void HookManager::remove(sdk::REMethodDefinition* fn, HookId id) {
 
         // Delete the vtable hooks.
         for (auto& obj : queued_vtable_deletions) {
-            spdlog::info("[HookManager] Removing VT hook for {:x}", (uintptr_t)obj);
+            REVR_LOG(spdlog::info("[HookManager] Removing VT hook for {:x}", (uintptr_t)obj));
             m_hooked_vtables.erase(obj);
         }
     }

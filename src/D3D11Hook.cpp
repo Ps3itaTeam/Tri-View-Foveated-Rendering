@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <algorithm>
 #include <spdlog/spdlog.h>
 #include <utility/Thread.hpp>
@@ -20,7 +21,7 @@ D3D11Hook::~D3D11Hook() {
 }
 
 bool D3D11Hook::hook() {
-    spdlog::info("Hooking D3D11");
+    REVR_LOG(spdlog::info("Hooking D3D11"));
 
     g_d3d11_hook = this;
 
@@ -50,7 +51,7 @@ bool D3D11Hook::hook() {
     // it allows compatibility with ReShade and other overlays that hook it
     // this is just a dummy device anyways, we don't want the other overlays to be able to use it
     if (original_bytes) {
-        spdlog::info("D3D11CreateDeviceAndSwapChain appears to be hooked, temporarily unhooking");
+        REVR_LOG(spdlog::info("D3D11CreateDeviceAndSwapChain appears to be hooked, temporarily unhooking"));
 
         std::vector<uint8_t> hooked_bytes(original_bytes->size());
         memcpy(hooked_bytes.data(), &D3D11CreateDeviceAndSwapChain, original_bytes->size());
@@ -61,18 +62,18 @@ bool D3D11Hook::hook() {
         if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_NULL, nullptr, 0, &feature_level, 1, D3D11_SDK_VERSION,
                 &swap_chain_desc, &swap_chain, &device, nullptr, &context))) 
         {
-            spdlog::error("Failed to create D3D11 device");
+            REVR_LOG(spdlog::error("Failed to create D3D11 device"));
             memcpy(&D3D11CreateDeviceAndSwapChain, hooked_bytes.data(), hooked_bytes.size());
             return false;
         }
         
-        spdlog::info("Restoring hooked bytes for D3D11CreateDeviceAndSwapChain");
+        REVR_LOG(spdlog::info("Restoring hooked bytes for D3D11CreateDeviceAndSwapChain"));
         memcpy(&D3D11CreateDeviceAndSwapChain, hooked_bytes.data(), hooked_bytes.size());
     } else {
         if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_NULL, nullptr, 0, &feature_level, 1, D3D11_SDK_VERSION,
                 &swap_chain_desc, &swap_chain, &device, nullptr, &context))) 
         {
-            spdlog::error("Failed to create D3D11 device");
+            REVR_LOG(spdlog::error("Failed to create D3D11 device"));
             return false;
         }
     }
@@ -91,7 +92,7 @@ bool D3D11Hook::hook() {
 
         m_hooked = true;
     } catch (const std::exception& e) {
-        spdlog::error("Failed to hook D3D11: {}", e.what());
+        REVR_LOG(spdlog::error("Failed to hook D3D11: {}", e.what()));
         m_hooked = false;
     }
 
@@ -108,7 +109,7 @@ bool D3D11Hook::unhook() {
         return true;
     }
 
-    spdlog::info("Unhooking D3D11");
+    REVR_LOG(spdlog::info("Unhooking D3D11"));
 
     if (m_present_hook->remove() && m_resize_buffers_hook->remove()) {
         m_hooked = false;
@@ -176,7 +177,7 @@ HRESULT WINAPI D3D11Hook::present(IDXGISwapChain* swap_chain, UINT sync_interval
 
             memcpy(present_fn, original_bytes->data(), original_bytes->size());
 
-            spdlog::info("Present fixed");
+            REVR_LOG(spdlog::info("Present fixed"));
         }
 
         return last_d3d11_present_result;
@@ -243,7 +244,7 @@ HRESULT WINAPI D3D11Hook::resize_buffers(
 
             memcpy(resize_buffers_fn, original_bytes->data(), original_bytes->size());
 
-            spdlog::info("Resize buffers fixed");
+            REVR_LOG(spdlog::info("Resize buffers fixed"));
         }
 
         return last_d3d11_resize_buffers_result;

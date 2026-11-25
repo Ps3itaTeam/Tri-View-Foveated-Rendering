@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <cstdint>
 #include <concepts>
 
@@ -186,7 +187,7 @@ void release(sol::this_state s, ::REManagedObject* obj, bool force = false) {
                 utility::re_managed_object::release(obj);
             }
         } else {
-            spdlog::warn("REManagedObject:release attempted to release an object that was not managed by our Lua state");
+            REVR_LOG(spdlog::warn("REManagedObject:release attempted to release an object that was not managed by our Lua state"));
         }
     }
 }
@@ -288,10 +289,10 @@ int sol_lua_push(sol::types<T*>, lua_State* l, T* obj) {
         constexpr auto function_sig = utility::hash(__FUNCSIG__);
 
         if (sol::object obj = objects_top[function_sig]; obj.is<sol::nil_t>()) {
-            spdlog::info("About to create a weak table for usertype {}", __FUNCSIG__);
+            REVR_LOG(spdlog::info("About to create a weak table for usertype {}", __FUNCSIG__));
             sol::object res = sv.load("return setmetatable({}, { __mode = \"v\" })")();
             objects_top[function_sig] = res;
-            spdlog::info("Created a weak table for usertype {}", __FUNCSIG__);
+            REVR_LOG(spdlog::info("Created a weak table for usertype {}", __FUNCSIG__));
         }
 
         sol::lua_table objects = objects_top[function_sig];

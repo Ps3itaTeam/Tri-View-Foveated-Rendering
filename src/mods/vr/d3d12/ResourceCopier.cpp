@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <spdlog/spdlog.h>
 #include <utility/String.hpp>
 
@@ -19,7 +20,7 @@ bool ResourceCopier::setup(const wchar_t* name) {
     this->fence.Reset();
 
     if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&this->cmd_allocator)))) {
-        spdlog::error("[VR] Failed to create command allocator for {}", utility::narrow(name));
+        REVR_LOG(spdlog::error("[VR] Failed to create command allocator for {}", utility::narrow(name)));
         return false;
     }
 
@@ -27,14 +28,14 @@ bool ResourceCopier::setup(const wchar_t* name) {
 
     if (FAILED(device->CreateCommandList(
             0, D3D12_COMMAND_LIST_TYPE_DIRECT, this->cmd_allocator.Get(), nullptr, IID_PPV_ARGS(&this->cmd_list)))) {
-        spdlog::error("[VR] Failed to create command list for {}", utility::narrow(name));
+        REVR_LOG(spdlog::error("[VR] Failed to create command list for {}", utility::narrow(name)));
         return false;
     }
     
     this->cmd_list->SetName(name);
 
     if (FAILED(device->CreateFence(this->fence_value, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&this->fence)))) {
-        spdlog::error("[VR] Failed to create fence for {}", utility::narrow(name));
+        REVR_LOG(spdlog::error("[VR] Failed to create fence for {}", utility::narrow(name)));
         return false;
     }
 
@@ -66,11 +67,11 @@ void ResourceCopier::wait(uint32_t ms) {
         ResetEvent(this->fence_event);
         this->waiting_for_fence = false;
         if (FAILED(this->cmd_allocator->Reset())) {
-            spdlog::error("[VR] Failed to reset command allocator for {}", utility::narrow(this->internal_name));
+            REVR_LOG(spdlog::error("[VR] Failed to reset command allocator for {}", utility::narrow(this->internal_name)));
         }
 
         if (FAILED(this->cmd_list->Reset(this->cmd_allocator.Get(), nullptr))) {
-            spdlog::error("[VR] Failed to reset command list for {}", utility::narrow(this->internal_name));
+            REVR_LOG(spdlog::error("[VR] Failed to reset command list for {}", utility::narrow(this->internal_name)));
         }
         this->has_commands = false;
     }
@@ -212,7 +213,7 @@ void ResourceCopier::execute() {
     
     if (this->has_commands) {
         if (FAILED(this->cmd_list->Close())) {
-            spdlog::error("[VR] Failed to close command list. ({})", utility::narrow(this->internal_name));
+            REVR_LOG(spdlog::error("[VR] Failed to close command list. ({})", utility::narrow(this->internal_name)));
             return;
         }
         

@@ -1,5 +1,6 @@
 #define INITGUID
 
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <spdlog/spdlog.h>
 
 #include "REFramework.hpp"
@@ -17,11 +18,11 @@ DInputHook::DInputHook(HWND wnd)
     if (g_dinput_hook == nullptr) {
         g_dinput_hook = this;
         if (hook()) {
-            spdlog::info("DInputHook hooked successfully.");
+            REVR_LOG(spdlog::info("DInputHook hooked successfully."));
         }
         else {
             g_dinput_hook = nullptr;
-            spdlog::info("DInputHook failed to hook.");
+            REVR_LOG(spdlog::info("DInputHook failed to hook."));
         }
     }
 }
@@ -34,7 +35,7 @@ DInputHook::~DInputHook() {
 }
 
 bool DInputHook::hook() {
-    spdlog::info("Entering DInputHook::hook().");
+    REVR_LOG(spdlog::info("Entering DInputHook::hook()."));
 
     // All we do here is create an IDirectInputDevice so that we can get the
     // addresses of the methods we want to hook from its vtable.
@@ -44,36 +45,36 @@ bool DInputHook::hook() {
     auto dinput8_create = (DirectInput8CreateFn)GetProcAddress(dinput8, "DirectInput8Create");
 
     if (dinput8_create == nullptr) {
-        spdlog::info("Failed to find DirectInput8Create.");
+        REVR_LOG(spdlog::info("Failed to find DirectInput8Create."));
         return false;
     }
 
-    spdlog::info("Got DirectInput8Create {:p}", (void*)dinput8_create);
+    REVR_LOG(spdlog::info("Got DirectInput8Create {:p}", (void*)dinput8_create));
 
     auto instance = (HINSTANCE)GetModuleHandle(nullptr);
     IDirectInput* dinput{ nullptr };
 
     if (FAILED(dinput8_create(instance, DIRECTINPUT_VERSION, IID_IDirectInput8W, (LPVOID*)&dinput, nullptr))) {
-        spdlog::info("Failed to create IDirectInput.");
+        REVR_LOG(spdlog::info("Failed to create IDirectInput."));
         return false;
     }
 
-    spdlog::info("Got IDirectInput {:p}", (void*)dinput);
+    REVR_LOG(spdlog::info("Got IDirectInput {:p}", (void*)dinput));
 
     IDirectInputDevice* device{ nullptr };
 
     if (FAILED(dinput->CreateDevice(GUID_SysKeyboard, &device, nullptr))) {
-        spdlog::info("Failed to create IDirectInputDevice.");
+        REVR_LOG(spdlog::info("Failed to create IDirectInputDevice."));
         dinput->Release();
         return false;
     }
 
-    spdlog::info("Got IDirectInputDevice {:p}", (void*)device);
+    REVR_LOG(spdlog::info("Got IDirectInputDevice {:p}", (void*)device));
 
     // Get the addresses of the methods we want to hook.
     auto get_device_state = (*(uintptr_t**)device)[9];
 
-    spdlog::info("Got IDirectInputDevice::GetDeviceState {:x}", get_device_state);
+    REVR_LOG(spdlog::info("Got IDirectInputDevice::GetDeviceState {:x}", get_device_state));
 
     device->Release();
     dinput->Release();
@@ -87,7 +88,7 @@ bool DInputHook::hook() {
 HRESULT DInputHook::get_device_state_internal(IDirectInputDevice* device, DWORD size, LPVOID data) {
     auto original_get_device_state = (decltype(DInputHook::get_device_state)*)m_get_device_state_hook->get_original();
 
-    spdlog::debug("getDeviceState");
+    REVR_LOG(spdlog::debug("getDeviceState"));
 
     // If we are ignoring input then we call the original to remove buffered    
     // input events from the devices queue without modifying the out parameters.

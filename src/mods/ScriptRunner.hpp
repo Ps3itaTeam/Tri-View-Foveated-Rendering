@@ -7,6 +7,7 @@
 #include <mutex>
 #include <deque>
 #include <shared_mutex>
+#include <atomic>
 
 #include <Windows.h>
 
@@ -285,6 +286,15 @@ private:
 
     std::vector<sol::protected_function> m_pre_gui_draw_element_fns{};
     std::vector<sol::protected_function> m_gui_draw_element_fns{};
+
+public:
+    // [CPU 04.11.2026] how many GUI element callbacks and application entry callbacks the scripts of all states have
+    // registered. The script runner asks it before taking its lock for every GUI element (from the main thread and the
+    // workers that draw the GUI at once) and every application entry: with none registered there is nothing to call.
+    static inline std::atomic<int64_t> s_gui_fns{0};
+    static inline std::atomic<int64_t> s_entry_fns{0};
+
+private:
     std::vector<sol::protected_function> m_on_draw_ui_fns{};
     std::vector<sol::protected_function> m_on_frame_fns{};
     std::vector<sol::protected_function> m_on_script_reset_fns{};
@@ -350,6 +360,7 @@ public:
     // framed = true: CollapsingHeader mit Rahmen wie die Nachbarn unter
     // "REFramework Options"; false: TreeNode wie in "Developer".
     void draw_scripts_tree(bool framed = false);
+    bool wants_transform_hooks() const override { return true; } // [CPU 03.11.2026] see Mod::wants_transform_hooks
     void on_update_transform(RETransform* transform) override;
     void on_pre_application_entry(void* entry, const char* name, size_t hash) override;
     void on_application_entry(void* entry, const char* name, size_t hash) override;

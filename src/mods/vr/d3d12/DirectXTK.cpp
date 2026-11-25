@@ -1,3 +1,6 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
+#include <spdlog/spdlog.h>
+
 #include "DirectXTK.hpp"
 
 namespace d3d12 {
@@ -9,6 +12,19 @@ void render_srv_to_rtv(
     D3D12_RESOURCE_STATES src_state, 
     D3D12_RESOURCE_STATES dst_state)
 {
+    // [27.10.2026] a context whose views could not be created (see TextureContext::setup) must not be drawn with:
+    // null heaps crashed the present thread
+    if (batch == nullptr || command_list == nullptr || src.texture == nullptr || dst.texture == nullptr || src.srv_heap == nullptr || dst.rtv_heap == nullptr) {
+        static bool logged = false;
+
+        if (!logged) {
+            logged = true;
+            REVR_LOG(spdlog::error("[d3d12] render_srv_to_rtv: texture context without views, draw skipped"));
+        }
+
+        return;
+    }
+
     const auto dst_desc = dst.texture->GetDesc();
     const auto src_desc = src.texture->GetDesc();
 

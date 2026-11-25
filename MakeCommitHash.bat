@@ -6,20 +6,23 @@ exit /b 0
 )
 
 FOR /F "tokens=*" %%g IN ('git rev-parse HEAD') DO (SET REF_COMMIT_HASH=%%g)
+IF "%REF_COMMIT_HASH%"=="" (SET REF_COMMIT_HASH=unknown)
 
 FOR /F "tokens=*" %%t IN ('git describe --tags --abbrev^=0') DO (SET REF_TAG=%%t)
 IF "%REF_TAG%"=="" (SET REF_TAG=no_tag)
 
-FOR /F "tokens=*" %%c IN ('git describe --tags --long') DO (
-FOR /F "tokens=1,2 delims=-" %%a IN ("%%c") DO (
-SET REF_TAG_LONG=%%a
-SET REF_COMMITS_PAST_TAG=%%b
-)
-)
+FOR /F "tokens=*" %%c IN ('git describe --tags --long') DO (SET REF_TAG_LONG=%%c)
+IF "%REF_TAG_LONG%"=="" (SET REF_TAG_LONG=%REF_TAG%)
 
+REM Commits since the tag, counted by git itself. Splitting "git describe --tags --long" at the dashes breaks with a
+REM tag name that contains a dash (RE4VR-2.1.5-0-g8227c990 gave "2.1.5", which does not compile).
+IF NOT "%REF_TAG%"=="no_tag" (
+FOR /F "tokens=*" %%c IN ('git rev-list --count %REF_TAG%..HEAD') DO (SET REF_COMMITS_PAST_TAG=%%c)
+)
 IF "%REF_COMMITS_PAST_TAG%"=="" (SET REF_COMMITS_PAST_TAG=0)
 
 FOR /F "tokens=*" %%b IN ('git rev-parse --abbrev-ref HEAD') DO (SET REF_BRANCH=%%b)
+IF "%REF_BRANCH%"=="" (SET REF_BRANCH=unknown)
 
 FOR /F "tokens=*" %%n IN ('git rev-list --count HEAD') DO (SET REF_TOTAL_COMMITS=%%n)
 IF "%REF_TOTAL_COMMITS%"=="" (SET REF_TOTAL_COMMITS=0)

@@ -35,6 +35,7 @@
 #else
 #include "sdk/regenny/mhrise_tdb71/via/Window.hpp"
 #include "sdk/regenny/mhrise_tdb71/via/SceneView.hpp"
+#include "mods/vr/ReleaseBuild.hpp" // [RELEASE SWITCH fix140] REVR_RELEASE
 #endif
 #endif
 
@@ -79,12 +80,12 @@ std::optional<std::string> Graphics::on_initialize() {
                     enum_data = *(int64_t*)raw_data;
                     break;
                 default:
-                    spdlog::error("Unknown enum size: {}", raytracing_enum->get_valuetype_size());
+                    REVR_LOG(spdlog::error("Unknown enum size: {}", raytracing_enum->get_valuetype_size()));
                     break;
             }
 
             if (enum_data < 0 || enum_data + 1 >= s_ray_trace_type.size()) {
-                spdlog::error("Invalid enum data: {} {}", f->get_name(), enum_data);
+                REVR_LOG(spdlog::error("Invalid enum data: {} {}", f->get_name(), enum_data));
                 continue;
             }
 
@@ -208,9 +209,9 @@ try {
     )--delimiter--"
 );
 } catch(const std::exception& e) {
-    spdlog::error("Error while trying to hook app.savedata.cOptionParam.getOptionValue(app.Option.ID): {}", e.what());
+    REVR_LOG(spdlog::error("Error while trying to hook app.savedata.cOptionParam.getOptionValue(app.Option.ID): {}", e.what()));
 } catch(...) {
-    spdlog::error("Error while trying to hook app.savedata.cOptionParam.getOptionValue(app.Option.ID): unknown error");
+    REVR_LOG(spdlog::error("Error while trying to hook app.savedata.cOptionParam.getOptionValue(app.Option.ID): unknown error"));
 }
 #endif
 }
@@ -219,6 +220,10 @@ void Graphics::on_config_load(const utility::Config& cfg) {
     for (IModValue& option : m_options) {
         option.config_load(cfg);
     }
+
+#if REVR_RELEASE
+    m_shader_playground->value() = false; // [RELEASE SWITCH fix140] developer tool: never on in the release
+#endif
 }
 
 void Graphics::on_config_save(utility::Config& cfg) {
@@ -306,7 +311,7 @@ void Graphics::on_draw_ui() {
             m_ray_trace_always_recreate_rt_component->draw("Always Recreate RT Component");
             // Description of the above option
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Recreates the RT component. Useful if Ray Tracing Tweaks is not working.");
+                menu_text::hint_tooltip("Recreates the RT component. Useful if Ray Tracing Tweaks is not working.");
             }
             m_ray_trace_type->draw("Ray Trace Type");
 
@@ -317,12 +322,12 @@ void Graphics::on_draw_ui() {
 
             m_ray_trace_clone_type_pre->draw("Ray Trace Clone Type Pre");
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip(clone_tooltip);
+                menu_text::hint_tooltip(clone_tooltip);
             }
 
             m_ray_trace_clone_type_post->draw("Ray Trace Clone Type Post");
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip(clone_tooltip);
+                menu_text::hint_tooltip(clone_tooltip);
             }
             
             m_ray_trace_clone_type_true->draw("Ray Trace Clone Type True");
@@ -330,7 +335,7 @@ void Graphics::on_draw_ui() {
                 const auto true_tooltip =
                     "Uses a completely separate RT component instead of re-using the main RT component.\n"
                     "Might crash or have other issues. Use with caution.\n";
-                ImGui::SetTooltip(true_tooltip);
+                menu_text::hint_tooltip(true_tooltip);
             }
 
             // Hybrid/pure
@@ -343,6 +348,7 @@ void Graphics::on_draw_ui() {
         ImGui::TreePop();
     }
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix140] developer tool: debug build only
     ImGui::SetNextItemOpen(true, ImGuiCond_::ImGuiCond_Once);
     if (ImGui::TreeNode("Shader Playground")) {
         m_shader_playground->draw("Enable Shader Playground");
@@ -375,14 +381,14 @@ void Graphics::on_draw_ui() {
                         }
 
                         if (node_open) {
-                            ImGui::Combo("Dispatch Mode", (int*)&replacement.dispatch_mode, s_shader_dispatch_modes.data(), s_shader_dispatch_modes.size());
+                            menu_text::Combo("Dispatch Mode", (int*)&replacement.dispatch_mode, s_shader_dispatch_modes.data(), s_shader_dispatch_modes.size());
 
-                            ImGui::InputInt("Thread Group X", (int32_t*)&replacement.thread_group_x);
-                            ImGui::InputInt("Thread Group Y", (int32_t*)&replacement.thread_group_y);
-                            ImGui::InputInt("Thread Group Z", (int32_t*)&replacement.thread_group_z);
-                            ImGui::InputInt("Constant", (int32_t*)&replacement.constant);
+                            menu_text::InputInt("Thread Group X", (int32_t*)&replacement.thread_group_x);
+                            menu_text::InputInt("Thread Group Y", (int32_t*)&replacement.thread_group_y);
+                            menu_text::InputInt("Thread Group Z", (int32_t*)&replacement.thread_group_z);
+                            menu_text::InputInt("Constant", (int32_t*)&replacement.constant);
 
-                            ImGui::Checkbox("Valid hash", &replacement.valid_hash);
+                            menu_text::Checkbox("Valid hash", &replacement.valid_hash);
 
                             ImGui::TreePop();
                         }
@@ -401,6 +407,7 @@ void Graphics::on_draw_ui() {
     }
 #endif
 }
+#endif
 
 void Graphics::on_present() {
     if (g_framework->is_dx11()) {
@@ -972,13 +979,13 @@ void Graphics::setup_shader_interception_hook() {
 
     m_attempted_shader_interception_hook = true;
 
-    spdlog::info("[Graphics] Setting up shader interception hook");
+    REVR_LOG(spdlog::info("[Graphics] Setting up shader interception hook"));
 
     // TESTING!!!
     if (sdk::renderer::ShaderResource::get_find_fn() != nullptr) {
         m_find_pipeline_state_hook = std::make_unique<FunctionHook>((uintptr_t)sdk::renderer::ShaderResource::get_find_fn(), (uintptr_t)find_pipeline_state_hook);
         if (!m_find_pipeline_state_hook->create()) {
-            spdlog::error("[Graphics] Failed to create find pipeline state hook");
+            REVR_LOG(spdlog::error("[Graphics] Failed to create find pipeline state hook"));
             return;
         }
     }
@@ -991,10 +998,12 @@ void Graphics::setup_path_trace_hook() {
 
     m_attempted_path_trace_hook = true;
 
-    spdlog::info("[Graphics] Setting up path trace hook");
+    REVR_LOG(spdlog::info("[Graphics] Setting up path trace hook"));
 
     const auto game = utility::get_executable();
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
     const auto start1 = std::chrono::high_resolution_clock::now();
+#endif
     auto ref = utility::find_function_from_string_ref(game, "RayTraceSettings", true);
 
     if (!ref.has_value()) {
@@ -1002,7 +1011,7 @@ void Graphics::setup_path_trace_hook() {
     }
 
     if (!ref.has_value()) {
-        spdlog::error("[Graphics] Failed to find function with RayTraceSettings string reference");
+        REVR_LOG(spdlog::error("[Graphics] Failed to find function with RayTraceSettings string reference"));
         return;
     }
 
@@ -1010,14 +1019,14 @@ void Graphics::setup_path_trace_hook() {
     const auto fn = utility::find_function_start_with_call(ref.value());
 
     if (!fn.has_value()) {
-        spdlog::error("[Graphics] Failed to find RayTraceSettings function");
+        REVR_LOG(spdlog::error("[Graphics] Failed to find RayTraceSettings function"));
         return;
     }
 
-    spdlog::info("[Graphics] Took {}ms to search for RayTraceSettings", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start1).count());
+    REVR_LOG(spdlog::info("[Graphics] Took {}ms to search for RayTraceSettings", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start1).count()));
 
 
-    spdlog::info("[Graphics] Found RayTraceSettings function @ {:x}", *fn);
+    REVR_LOG(spdlog::info("[Graphics] Found RayTraceSettings function @ {:x}", *fn));
 
     std::unordered_map<size_t, size_t> offset_reference_counts{};
 
@@ -1056,13 +1065,13 @@ void Graphics::setup_path_trace_hook() {
             offset_reference_counts[offset] = 1;
         }
 
-        spdlog::info("[Graphics] Encountered a CMP offset @ {:x}", offset);
+        REVR_LOG(spdlog::info("[Graphics] Encountered a CMP offset @ {:x}", offset));
 
         return utility::ExhaustionResult::CONTINUE;
     });
 
     if (offset_reference_counts.empty()) {
-        spdlog::error("[Graphics] Failed to find any RT type offsets");
+        REVR_LOG(spdlog::error("[Graphics] Failed to find any RT type offsets"));
         return;
     }
 
@@ -1071,45 +1080,47 @@ void Graphics::setup_path_trace_hook() {
     });
 
     if (max_offset == offset_reference_counts.end()) {
-        spdlog::error("[Graphics] Failed to find most referenced RT type offset");
+        REVR_LOG(spdlog::error("[Graphics] Failed to find most referenced RT type offset"));
         return;
     }
 
     m_rt_type_offset = max_offset->first;
-    spdlog::info("[Graphics] Found RT type offset @ {:x}", *m_rt_type_offset);
+    REVR_LOG(spdlog::info("[Graphics] Found RT type offset @ {:x}", *m_rt_type_offset));
 
     m_rt_draw_impl_hook = std::make_unique<FunctionHook>(*fn, (uintptr_t)rt_draw_impl_hook);
     if (!m_rt_draw_impl_hook->create()) {
-        spdlog::error("[Graphics] Failed to create path trace draw impl hook");
+        REVR_LOG(spdlog::error("[Graphics] Failed to create path trace draw impl hook"));
         return;
     }
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
     std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+#endif
 
     const auto draw_ref = utility::find_function_from_string_ref(game, "Bounce2", true);
 
     if (!draw_ref.has_value()) {
-        spdlog::error("[Graphics] Failed to find function with Bounce2 string reference");
+        REVR_LOG(spdlog::error("[Graphics] Failed to find function with Bounce2 string reference"));
         return;
     }
 
     const auto draw_fn = utility::find_virtual_function_start(draw_ref.value());
 
     if (!draw_fn.has_value()) {
-        spdlog::error("[Graphics] Failed to find Bounce2 function");
+        REVR_LOG(spdlog::error("[Graphics] Failed to find Bounce2 function"));
         return;
     }
 
-    spdlog::info("[Graphics] Took {}ms to search for Bounce2", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count());
+    REVR_LOG(spdlog::info("[Graphics] Took {}ms to search for Bounce2", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count()));
 
     m_rt_draw_hook = std::make_unique<FunctionHook>(*draw_fn, (uintptr_t)rt_draw_hook);
 
     if (!m_rt_draw_hook->create()) {
-        spdlog::error("[Graphics] Failed to create path trace draw hook");
+        REVR_LOG(spdlog::error("[Graphics] Failed to create path trace draw hook"));
         return;
     }
 
-    spdlog::info("[Graphics] Path trace hook set up");
+    REVR_LOG(spdlog::info("[Graphics] Path trace hook set up"));
 }
 
 void Graphics::setup_rt_component() {
@@ -1148,7 +1159,7 @@ void Graphics::setup_rt_component() {
         rt_component = sdk::call_object_func_easy<REComponent*>(game_object, "createComponent(System.Type)", rt_t->get_runtime_type());
 
         if (rt_component != nullptr) {
-            spdlog::info("[Graphics] Successfully created new RT component @ {:x}", (uintptr_t)rt_component);
+            REVR_LOG(spdlog::info("[Graphics] Successfully created new RT component @ {:x}", (uintptr_t)rt_component));
             m_rt_recreated_component = (sdk::ManagedObject*)rt_component;
         }
     }
@@ -1166,7 +1177,7 @@ void Graphics::setup_rt_component() {
         m_rt_cloned_component = (sdk::ManagedObject*)rt_t->create_instance_full(false);
 
         if (m_rt_cloned_component.get() != nullptr) {
-            spdlog::info("[Graphics] Successfully cloned RT component @ {:x}", (uintptr_t)m_rt_cloned_component.get());
+            REVR_LOG(spdlog::info("[Graphics] Successfully cloned RT component @ {:x}", (uintptr_t)m_rt_cloned_component.get()));
         }
     }
 }
@@ -1248,7 +1259,7 @@ void Graphics::apply_ray_tracing_tweaks() {
 
     // Restore shadows if they were disabled
     if ((!any_pt || !m_ray_trace_disable_raster_shadows->value()) && m_was_shadows_disabled && set_DynamicShadowEnable != nullptr) {
-        spdlog::info("[Graphics] Restoring shadows");
+        REVR_LOG(spdlog::info("[Graphics] Restoring shadows"));
         set_DynamicShadowEnable->call<void>(context, true);
         m_was_shadows_disabled = false;
     }
@@ -1418,7 +1429,7 @@ sdk::renderer::PipelineState* Graphics::find_pipeline_state_hook(void* shader_re
 
     if (hashes.contains(murmur_hash)) {
         if (graphics->m_pt_pipeline_resource == nullptr) {
-            spdlog::info("[Graphics] Found path trace pipeline resource @ {:x}", (uintptr_t)result);
+            REVR_LOG(spdlog::info("[Graphics] Found path trace pipeline resource @ {:x}", (uintptr_t)result));
         }
 
         graphics->m_pt_pipeline_resource = result;

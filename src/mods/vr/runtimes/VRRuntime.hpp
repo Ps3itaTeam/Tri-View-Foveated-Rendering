@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <string_view>
 #include <functional>
@@ -130,6 +131,10 @@ struct VRRuntime {
     std::array<Matrix4x4f, 2> projections{};
     std::array<Matrix4x4f, 2> eyes{};
 
+    // [CPU PROFILE 03.11.2026] time spent waiting in the runtime's frame sync (OpenVR WaitGetPoses): the frame's idle part,
+    // not work (read by FoveatedRendering for the log)
+    std::atomic<uint64_t> sync_wait_ns{0};
+    std::atomic<uint64_t> sync_waits{0};
     mutable std::shared_mutex projections_mtx{};
     mutable std::shared_mutex eyes_mtx{};
     mutable std::shared_mutex pose_mtx{};

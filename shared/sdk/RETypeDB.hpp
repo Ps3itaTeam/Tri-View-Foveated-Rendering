@@ -1091,6 +1091,7 @@ struct RETypeDB : public sdk::RETypeDB_ {
     sdk::REModule* get_module(uint32_t index) const;
 
     sdk::RETypeDefinition* find_type(std::string_view name) const;
+    sdk::RETypeDefinition* find_type_uncached(std::string_view name) const; // [CPU 04.11.2026] without the per-thread front
     sdk::RETypeDefinition* find_type_by_fqn(uint32_t fqn) const;
     sdk::RETypeDefinition* get_type(uint32_t index) const;
     sdk::REMethodDefinition* get_method(uint32_t index) const;

@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <spdlog/spdlog.h>
 
 #include "RETypeDB.hpp"
@@ -15,7 +16,7 @@ Application* Application::get() {
     const auto application_type = Application::get_type();
 
     if (application_type == nullptr) {
-        spdlog::error("Cannot find via.Application");
+        REVR_LOG(spdlog::error("Cannot find via.Application"));
         return nullptr;
     }
 
@@ -24,7 +25,7 @@ Application* Application::get() {
 
 Application::Function* Application::get_functions() {
     static auto functions_offset = [this]() -> std::optional<int32_t> {
-        spdlog::info("Searching for Application::functions offset...");
+        REVR_LOG(spdlog::info("Searching for Application::functions offset..."));
 
         const auto mod = utility::get_executable();
         const auto mod_size = utility::get_module_size(mod);
@@ -36,7 +37,7 @@ Application::Function* Application::get_functions() {
             ref = utility::scan(*ref + 1, mod_end - (*ref + 1), "89 81 ? ? ? ? 48 8B ? 48 81 C1 ? ? ? ?")) 
         {
             if (!ref) {
-                spdlog::info("MHRise pattern not found, skipping...");
+                REVR_LOG(spdlog::info("MHRise pattern not found, skipping..."));
                 break;
             }
 
@@ -48,24 +49,24 @@ Application::Function* Application::get_functions() {
                     const auto ptr = (Application::Function*)((uintptr_t)this + candidate);
 
                     if (ptr == nullptr || IsBadReadPtr(ptr, sizeof(Application::Function) * 50)) {
-                        spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate);
+                        REVR_LOG(spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate));
                         continue;
                     }
 
                     if (ptr->description == nullptr || IsBadReadPtr(ptr->description, 32)) {
-                        spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate);
+                        REVR_LOG(spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate));
                         continue;
                     }
                 } catch (...) {
-                    spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate);
+                    REVR_LOG(spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate));
                     continue;
                 }
 
-                spdlog::info("Application::functions offset: {:x}", candidate);
+                REVR_LOG(spdlog::info("Application::functions offset: {:x}", candidate));
                 return candidate;
             }
 
-            spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate);
+            REVR_LOG(spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate));
         }
 
         // For all the other RE Engine games in existence.
@@ -74,7 +75,7 @@ Application::Function* Application::get_functions() {
             ref = utility::scan(*ref + 1, mod_end - (*ref + 1), "44 8B ? ? ? 00 00 4C 8D ? ? ? ? 00 41")) 
         {
             if (!ref) {
-                spdlog::error("Cannot find Application::functions offset.");
+                REVR_LOG(spdlog::error("Cannot find Application::functions offset."));
                 return std::nullopt;
             }
 
@@ -86,24 +87,24 @@ Application::Function* Application::get_functions() {
                     const auto ptr = (Application::Function*)((uintptr_t)this + candidate);
 
                     if (ptr == nullptr || IsBadReadPtr(ptr, sizeof(Application::Function) * 50)) {
-                        spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate);
+                        REVR_LOG(spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate));
                         continue;
                     }
 
                     if (ptr->description == nullptr || IsBadReadPtr(ptr->description, 32)) {
-                        spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate);
+                        REVR_LOG(spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate));
                         continue;
                     }
                 } catch (...) {
-                    spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate);
+                    REVR_LOG(spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate));
                     continue;
                 }
 
-                spdlog::info("Application::functions offset: {:x}", candidate);
+                REVR_LOG(spdlog::info("Application::functions offset: {:x}", candidate));
                 return candidate;
             }
 
-            spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate);
+            REVR_LOG(spdlog::info("Skipping invalid Application::functions offset: {:x}", candidate));
         }
 
         bool found_wait_rendering = false;
@@ -113,7 +114,7 @@ Application::Function* Application::get_functions() {
         const auto module_entry_enum = sdk::find_type_definition("via.ModuleEntry");
 
         if (module_entry_enum == nullptr) {
-            spdlog::error("Cannot find via.ModuleEntry");
+            REVR_LOG(spdlog::error("Cannot find via.ModuleEntry"));
         }
 
         // screw that lets just bruteforce through the Application object looking for huge
@@ -142,10 +143,10 @@ Application::Function* Application::get_functions() {
                     if (module_entry_enum != nullptr) {
                         if (auto f = sdk::get_native_field<uint16_t>(nullptr, module_entry_enum, name, true); f != nullptr) {
                             if (*f != func.priority) {
-                                spdlog::error("{} priority mismatch: {} != {}", name.data(), *f, func.priority);
+                                REVR_LOG(spdlog::error("{} priority mismatch: {} != {}", name.data(), *f, func.priority));
                                 break; // the first one should always be valid.
                             } else{
-                                spdlog::info("{} priority match: {} == {}", name.data(), *f, func.priority);
+                                REVR_LOG(spdlog::info("{} priority match: {} == {}", name.data(), *f, func.priority));
                             }
                         }
                     } else if (func.priority != 1) {
@@ -186,7 +187,7 @@ Application::Function* Application::get_functions() {
                 }
 
                 if (found_wait_rendering && found_begin_rendering && found_end_rendering) {
-                    spdlog::info("Application::functions offset: {:x}", i);
+                    REVR_LOG(spdlog::info("Application::functions offset: {:x}", i));
                     return i;
                 }
             } catch (...) {
@@ -197,7 +198,7 @@ Application::Function* Application::get_functions() {
         }
 
 
-        spdlog::error("Cannot find Application::functions offset.");
+        REVR_LOG(spdlog::error("Cannot find Application::functions offset."));
 
         return std::nullopt;
     }();
@@ -280,7 +281,7 @@ float Application::get_delta_time() {
     static const auto application_type = Application::get_type();
 
     if (application_type == nullptr) {
-        spdlog::error("Cannot find via.Application");
+        REVR_LOG(spdlog::error("Cannot find via.Application"));
         return 0.0f;
     }
 
@@ -291,7 +292,7 @@ float Application::get_max_fps() {
     static const auto application_type = Application::get_type();
 
     if (application_type == nullptr) {
-        spdlog::error("Cannot find via.Application");
+        REVR_LOG(spdlog::error("Cannot find via.Application"));
         return 0.0f;
     }
 
@@ -303,7 +304,7 @@ void Application::set_max_fps(float max_fps) {
     static const auto application_type = Application::get_type();
 
     if (application_type == nullptr) {
-        spdlog::error("Cannot find via.Application");
+        REVR_LOG(spdlog::error("Cannot find via.Application"));
         return;
     }
 
@@ -315,7 +316,7 @@ void Application::set_global_speed(float speed) {
     static const auto application_type = Application::get_type();
 
     if (application_type == nullptr) {
-        spdlog::error("Cannot find via.Application");
+        REVR_LOG(spdlog::error("Cannot find via.Application"));
         return;
     }
 
@@ -327,7 +328,7 @@ float Application::get_global_speed() {
     static const auto application_type = Application::get_type();
 
     if (application_type == nullptr) {
-        spdlog::error("Cannot find via.Application");
+        REVR_LOG(spdlog::error("Cannot find via.Application"));
         return 0.0f;
     }
 

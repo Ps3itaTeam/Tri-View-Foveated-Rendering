@@ -40,7 +40,10 @@ struct CommandContext {
 
     bool waiting_for_fence{false};
     bool has_commands{false};
+    uint32_t unsubmitted_waits{0}; // [MENU HANG 14.11.2026] waits in a row that found recorded work which was never submitted
+    uint64_t dropped_lists{0};
 
     std::wstring internal_name{L"CommandContext object"};
+    std::string tag_name{"CommandContext object"}; // [SUBMIT TIMELINE 06.11.2026] its submits by name in the GPU timeline
 };
 }

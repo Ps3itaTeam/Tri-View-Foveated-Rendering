@@ -6,6 +6,7 @@
 #include <spdlog/sinks/basic_file_sink.h>
 
 #include "LooseFileLoader.hpp"
+#include "mods/vr/ReleaseBuild.hpp" // [RELEASE SWITCH fix140] REVR_RELEASE
 
 LooseFileLoader* g_loose_file_loader{nullptr};
 
@@ -13,6 +14,7 @@ LooseFileLoader::LooseFileLoader()
 {
     g_loose_file_loader = this;
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] the two log files (accessed and loose files): debug build only
     m_logger = spdlog::basic_logger_mt("LooseFileLoader", REFramework::get_persistent_dir("reframework_accessed_files.txt").string(), true);
     m_loose_file_logger = spdlog::basic_logger_mt("LooseFileLoader2", REFramework::get_persistent_dir("reframework_loose_files.txt").string(), true);
 
@@ -25,6 +27,7 @@ LooseFileLoader::LooseFileLoader()
     m_loose_file_logger->flush_on(spdlog::level::info);
 
     m_loose_file_logger->info("LooseFileLoader constructed");
+#endif
 }
 
 std::shared_ptr<LooseFileLoader>& LooseFileLoader::get() {
@@ -95,8 +98,9 @@ void LooseFileLoader::on_draw_ui() {
             m_all_loose_files.clear();
         }
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix140] developer tool: debug build only
         if (ImGui::TreeNode("Debug")) {
-            ImGui::Checkbox("Enable file cache", &m_enable_file_cache);
+            menu_text::Checkbox("Enable file cache", &m_enable_file_cache);
             ImGui::TextWrapped("Cache hits: %d", m_cache_hits);
             ImGui::TextWrapped("Uncached hits: %d", m_uncached_hits);
 
@@ -106,7 +110,9 @@ void LooseFileLoader::on_draw_ui() {
 
             ImGui::TreePop();
         }
+#endif
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] log files and the recent file lists: debug build only
         m_log_accessed_files->draw("Log accessed files");
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
@@ -121,7 +127,7 @@ void LooseFileLoader::on_draw_ui() {
             ImGui::EndTooltip();
         }
 
-        ImGui::Checkbox("Show recent files", &m_show_recent_files);
+        menu_text::Checkbox("Show recent files", &m_show_recent_files);
 
         if (m_show_recent_files) {
             std::shared_lock _{m_mutex};
@@ -142,6 +148,7 @@ void LooseFileLoader::on_draw_ui() {
                 ImGui::TreePop();
             }
         }
+#endif
     }
 }
 
@@ -150,14 +157,14 @@ void LooseFileLoader::hook() {
         return;
     }
 
-    spdlog::info("[LooseFileLoader] Attempting to find path_to_hash");
+    REVR_LOG(spdlog::info("[LooseFileLoader] Attempting to find path_to_hash"));
 
     m_attempted_hook = true;
 
     const auto tdb = sdk::RETypeDB::get();
 
     if (tdb == nullptr) {
-        spdlog::error("[LooseFileLoader] Failed to get type database");
+        REVR_LOG(spdlog::error("[LooseFileLoader] Failed to get type database"));
         return;
     }
 
@@ -182,11 +189,11 @@ void LooseFileLoader::hook() {
         }
 
         if (via_io_file == nullptr) {
-            spdlog::error("[LooseFileLoader] Failed to find via.io.file");
+            REVR_LOG(spdlog::error("[LooseFileLoader] Failed to find via.io.file"));
             return {};
         }
 
-        spdlog::info("[LooseFileLoader] Found via.io.file");
+        REVR_LOG(spdlog::info("[LooseFileLoader] Found via.io.file"));
 
         std::vector<uintptr_t> candidates{};
 
@@ -204,7 +211,7 @@ void LooseFileLoader::hook() {
         }
 
         if (candidates.empty()) {
-            spdlog::error("[LooseFileLoader] Failed to find via.io.file.exists methods");
+            REVR_LOG(spdlog::error("[LooseFileLoader] Failed to find via.io.file.exists methods"));
         }
 
         return candidates;
@@ -217,7 +224,7 @@ void LooseFileLoader::hook() {
     std::optional<uintptr_t> candidate{};
 
     auto check_fn = [&](uintptr_t exists_ptr) {
-        spdlog::info("[LooseFileLoader] Scanning for path_to_hash candidate at {:x}", exists_ptr);
+        REVR_LOG(spdlog::info("[LooseFileLoader] Scanning for path_to_hash candidate at {:x}", exists_ptr));
 
         utility::exhaustive_decode((uint8_t*)exists_ptr, 500, [&](utility::ExhaustionContext& ctx) -> utility::ExhaustionResult {
             if (candidate) {
@@ -232,12 +239,12 @@ void LooseFileLoader::hook() {
             // This means we have just entered call or something
             if (ctx.branch_start == ctx.addr) {
                 if (auto bs = utility::find_string_reference_in_path(ctx.branch_start, L"\\", false); bs.has_value()) {
-                    spdlog::info("[LooseFileLoader] Found a backslash reference at {:x}", bs->addr);
+                    REVR_LOG(spdlog::info("[LooseFileLoader] Found a backslash reference at {:x}", bs->addr));
 
                     // Now check if murmur hash constant is in the path
                     if (utility::find_pattern_in_path((uint8_t*)ctx.branch_start, 500, true, "? ? 6B CA EB 85")) {
                         candidate = ctx.branch_start;
-                        spdlog::info("[LooseFileLoader] Found path_to_hash candidate at {:x}", *candidate);
+                        REVR_LOG(spdlog::info("[LooseFileLoader] Found path_to_hash candidate at {:x}", *candidate));
                         return utility::ExhaustionResult::BREAK;
                     }
                 }
@@ -269,7 +276,7 @@ void LooseFileLoader::hook() {
             const auto fn_start = utility::find_function_start_with_call(new_candidate->addr);
 
             if (!fn_start.has_value()) {
-                spdlog::error("[LooseFileLoader] Failed to find path_to_hash candidate's start, cannot continue");
+                REVR_LOG(spdlog::error("[LooseFileLoader] Failed to find path_to_hash candidate's start, cannot continue"));
                 continue;
             }
 
@@ -296,14 +303,14 @@ void LooseFileLoader::hook() {
     }
 
     if (!candidate) {
-        spdlog::error("[LooseFileLoader] Failed to find path_to_hash candidate, cannot continue");
+        REVR_LOG(spdlog::error("[LooseFileLoader] Failed to find path_to_hash candidate, cannot continue"));
         return;
     }
 
     m_path_to_hash_hook = std::make_unique<FunctionHook>(candidate.value(), (uintptr_t)&path_to_hash_hook);
 
     if (!m_path_to_hash_hook->create()) {
-        spdlog::error("[LooseFileLoader] Failed to hook path_to_hash");
+        REVR_LOG(spdlog::error("[LooseFileLoader] Failed to hook path_to_hash"));
         return;
     }
 
@@ -316,19 +323,19 @@ bool safe_exists(const wchar_t* path) try {
     return std::filesystem::exists(path);
 } catch (const std::filesystem::filesystem_error& e) {
     if (std::chrono::steady_clock::now() - g_last_time_logged_safe_exists > std::chrono::seconds(1)) {
-        spdlog::error("[LooseFileLoader] Filesystem error in safe_exists: {}", e.what());
+        REVR_LOG(spdlog::error("[LooseFileLoader] Filesystem error in safe_exists: {}", e.what()));
         g_last_time_logged_safe_exists = std::chrono::steady_clock::now();
     }
     return false;
 } catch (const std::exception& e) {
     if (std::chrono::steady_clock::now() - g_last_time_logged_safe_exists > std::chrono::seconds(1)) {
-        spdlog::error("[LooseFileLoader] Exception in safe_exists: {}", e.what());
+        REVR_LOG(spdlog::error("[LooseFileLoader] Exception in safe_exists: {}", e.what()));
         g_last_time_logged_safe_exists = std::chrono::steady_clock::now();
     }
     return false;
 } catch (...) {
     if (std::chrono::steady_clock::now() - g_last_time_logged_safe_exists > std::chrono::seconds(1)) {
-        spdlog::error("[LooseFileLoader] Unknown exception in safe_exists!");
+        REVR_LOG(spdlog::error("[LooseFileLoader] Unknown exception in safe_exists!"));
         g_last_time_logged_safe_exists = std::chrono::steady_clock::now();
     }
     return false;
@@ -341,6 +348,7 @@ bool LooseFileLoader::handle_path(const wchar_t* path, size_t hash) {
 
     ++m_files_encountered;
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] the recent file lists: debug build only
     if (m_show_recent_files) {
         std::unique_lock _{m_mutex};
 
@@ -352,6 +360,7 @@ bool LooseFileLoader::handle_path(const wchar_t* path, size_t hash) {
             m_recent_accessed_files.pop_back();
         }
     }
+#endif
 
     const auto enabled = m_enabled->value();
 
@@ -384,6 +393,7 @@ bool LooseFileLoader::handle_path(const wchar_t* path, size_t hash) {
                     exists_on_disk = true;
                 }
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] the two log files: debug build only
                 if (m_log_accessed_files->value()) {
                     m_logger->info("{}", utility::narrow(path));
                 }
@@ -391,6 +401,7 @@ bool LooseFileLoader::handle_path(const wchar_t* path, size_t hash) {
                 if (exists_on_disk && m_log_loose_files->value()) {
                     m_loose_file_logger->info("{}", utility::narrow(path));
                 }
+#endif
 
                 m_seen_files.insert(hash); // Global
                 seen_files_local.insert(hash); // Thread local
@@ -403,6 +414,7 @@ bool LooseFileLoader::handle_path(const wchar_t* path, size_t hash) {
             ++m_uncached_hits;
         }
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] the recent file lists: debug build only
         if (m_show_recent_files && exists_on_disk) {
             std::unique_lock _{m_mutex};
 
@@ -413,6 +425,7 @@ bool LooseFileLoader::handle_path(const wchar_t* path, size_t hash) {
                 m_recent_loose_files.pop_back();
             }
         }
+#endif
 
         if (exists_on_disk) {
             ++g_loose_file_loader->m_loose_files_loaded;

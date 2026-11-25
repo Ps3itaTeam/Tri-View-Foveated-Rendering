@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <algorithm>
 
 #include <spdlog/spdlog.h>
@@ -18,7 +19,7 @@ AddSceneViewFn get_add_scene_view() {
     static void (*add_scene_view_fn)(void*) = nullptr;
 
     if (add_scene_view_fn == nullptr) {
-        spdlog::info("[Renderer] Finding add_scene_view_fn");
+        REVR_LOG(spdlog::info("[Renderer] Finding add_scene_view_fn"));
 
         /*
         .text:0000000142952B16 41 8B 86 B4 0A 00 00                          mov     eax, [r14+0AB4h]
@@ -41,13 +42,13 @@ AddSceneViewFn get_add_scene_view() {
         auto ref = utility::scan(mod, "4C 8D 05 ? ? ? ? 48 8D ? ? 48 8D ? 08 E8 ? ? ? ? 48 ? ? FF 15");
 
         if (!ref) {
-            spdlog::error("[Renderer] Failed to find add_scene_view_fn");
+            REVR_LOG(spdlog::error("[Renderer] Failed to find add_scene_view_fn"));
             return nullptr;
         }
 
         add_scene_view_fn = (decltype(add_scene_view_fn))utility::calculate_absolute(*ref + 3);
 
-        spdlog::info("[Renderer] add_scene_view_fn: {:x}", (uintptr_t)add_scene_view_fn);
+        REVR_LOG(spdlog::info("[Renderer] add_scene_view_fn: {:x}", (uintptr_t)add_scene_view_fn));
     }
 
     return add_scene_view_fn;
@@ -61,7 +62,7 @@ RenderLayer* RenderLayer::add_layer(::REType* layer_type, uint32_t priority, uin
     static RenderLayer* (*add_layer_fn)(RenderLayer*, ::REType*, uint32_t, uint8_t) = nullptr;
     
     if (add_layer_fn == nullptr) {
-        spdlog::info("[Renderer] Finding RenderLayer::AddLayer");
+        REVR_LOG(spdlog::info("[Renderer] Finding RenderLayer::AddLayer"));
 
         const auto mod = utility::get_executable();
         
@@ -78,12 +79,12 @@ RenderLayer* RenderLayer::add_layer(::REType* layer_type, uint32_t priority, uin
                     // Use a disassembler to scan through the function
                     // to find the call to add_scene_view_fn
                     // the function will be called multiple times, and will be the most called function within AddSceneView
-                    spdlog::info("[Renderer] Scanning for RenderLayer::AddLayer using disassembler");
+                    REVR_LOG(spdlog::info("[Renderer] Scanning for RenderLayer::AddLayer using disassembler"));
                     const auto potential_jmp = utility::scan_opcode((uintptr_t)add_scene_view_fn, 4, 0xE9);
 
                     if (potential_jmp) {
                         add_scene_view_fn = (decltype(add_scene_view_fn))utility::calculate_absolute(*potential_jmp + 1);
-                        spdlog::info("[Renderer] Jmp detected, add_scene_view_fn: {:x}", (uintptr_t)add_scene_view_fn);
+                        REVR_LOG(spdlog::info("[Renderer] Jmp detected, add_scene_view_fn: {:x}", (uintptr_t)add_scene_view_fn));
                     }
 
                     uintptr_t ip = (uintptr_t)add_scene_view_fn;
@@ -95,12 +96,12 @@ RenderLayer* RenderLayer::add_layer(::REType* layer_type, uint32_t priority, uin
                         const auto decoded = utility::decode_one((uint8_t*)ip);
 
                         if (!decoded) {
-                            spdlog::error("[Renderer] Failed to decode instruction @ 0x{:x} ({:x})", ip, ip - (uintptr_t)add_scene_view_fn);
+                            REVR_LOG(spdlog::error("[Renderer] Failed to decode instruction @ 0x{:x} ({:x})", ip, ip - (uintptr_t)add_scene_view_fn));
                             break;
                         }
 
                         if (std::string_view{decoded->Mnemonic}.starts_with("RET") || std::string_view{decoded->Mnemonic}.starts_with("INT3")) {
-                            spdlog::error("[Renderer] Encountering RET or INT3 @ 0x{:x} ({:x})", ip, ip - (uintptr_t)add_scene_view_fn);
+                            REVR_LOG(spdlog::error("[Renderer] Encountering RET or INT3 @ 0x{:x} ({:x})", ip, ip - (uintptr_t)add_scene_view_fn));
                             break;
                         }
 
@@ -117,7 +118,7 @@ RenderLayer* RenderLayer::add_layer(::REType* layer_type, uint32_t priority, uin
                             }
 
                             if (calls[addr] >= 3) {
-                                spdlog::info("[Renderer] Found 3 calls to add_scene_view_fn, stopping scan");
+                                REVR_LOG(spdlog::info("[Renderer] Found 3 calls to add_scene_view_fn, stopping scan"));
                                 break;
                             }
                         }
@@ -126,15 +127,15 @@ RenderLayer* RenderLayer::add_layer(::REType* layer_type, uint32_t priority, uin
                     }
 
                     if (best_call != 0) {
-                        spdlog::info("[Renderer] RenderLayer::AddLayer found at {:x}", best_call);
+                        REVR_LOG(spdlog::info("[Renderer] RenderLayer::AddLayer found at {:x}", best_call));
                         add_layer_fn = (decltype(add_layer_fn))best_call;
                     } else {
-                        spdlog::error("[Renderer] Failed to find RenderLayer::AddLayer using a disassembler");
+                        REVR_LOG(spdlog::error("[Renderer] Failed to find RenderLayer::AddLayer using a disassembler"));
                     }
                 }
 
                 if (!ref && add_layer_fn == nullptr) {
-                    spdlog::error("[Renderer] Failed to find add_layer");
+                    REVR_LOG(spdlog::error("[Renderer] Failed to find add_layer"));
                     return nullptr;
                 }
             }
@@ -144,12 +145,12 @@ RenderLayer* RenderLayer::add_layer(::REType* layer_type, uint32_t priority, uin
             add_layer_fn = (decltype(add_layer_fn))utility::calculate_absolute(*ref + 10);
 
             if (add_layer_fn == nullptr || IsBadReadPtr(add_layer_fn, sizeof(add_layer_fn))) {
-                spdlog::error("[Renderer] Failed to calculate add_layer");
+                REVR_LOG(spdlog::error("[Renderer] Failed to calculate add_layer"));
                 return nullptr;
             }
         }
 
-        spdlog::info("[Renderer] RenderLayer::AddLayer: {:x}", (uintptr_t)add_layer_fn);
+        REVR_LOG(spdlog::info("[Renderer] RenderLayer::AddLayer: {:x}", (uintptr_t)add_layer_fn));
     }
 
     return add_layer_fn(this, layer_type, priority, offset);
@@ -159,12 +160,12 @@ sdk::NativeArray<RenderLayer*>& RenderLayer::get_layers() {
     static uint32_t layers_offset = 0;
 
     if (layers_offset == 0) {
-        spdlog::info("[Renderer] Finding RenderLayer::layers");
+        REVR_LOG(spdlog::info("[Renderer] Finding RenderLayer::layers"));
 
         const auto root_layer = sdk::renderer::get_root_layer();
         
         if (root_layer == nullptr) {
-            spdlog::error("[Renderer] Failed to find root layer");
+            REVR_LOG(spdlog::error("[Renderer] Failed to find root layer"));
             throw std::runtime_error("[Renderer] Failed to find root layer");
         }
         
@@ -192,7 +193,7 @@ sdk::NativeArray<RenderLayer*>& RenderLayer::get_layers() {
             }
         }
 
-        spdlog::info("[Renderer] RenderLayer::layers: {:x}", layers_offset);
+        REVR_LOG(spdlog::info("[Renderer] RenderLayer::layers: {:x}", layers_offset));
     }
 
     return *(sdk::NativeArray<RenderLayer*>*)((uintptr_t)this + layers_offset);
@@ -322,7 +323,7 @@ void RenderLayer::set_parent(RenderLayer* layer) {
             for (auto i = 0; i < 0x100; i += sizeof(void*)) {
                 if (*(RenderLayer**)((uintptr_t)this + i) == parent) {
                     offset = i;
-                    spdlog::info("[Renderer] Parent offset: {:x}", i);
+                    REVR_LOG(spdlog::info("[Renderer] Parent offset: {:x}", i));
                     break;
                 }
             }
@@ -354,7 +355,7 @@ RenderLayer* RenderLayer::clone(bool recursive) {
     auto new_layer = (RenderLayer*)utility::re_managed_object::get_type_definition(this)->create_instance_full();
 
     if (new_layer == nullptr) {
-        spdlog::error("[Renderer] Failed to clone layer");
+        REVR_LOG(spdlog::error("[Renderer] Failed to clone layer"));
         return nullptr;
     }
 
@@ -413,20 +414,20 @@ void RenderLayer::clone_layers(RenderLayer* other, bool recursive) {
 void RenderContext::set_pipeline_state(sdk::renderer::PipelineState* pipeline_state) {
     using Fn = void (*)(RenderContext*, sdk::renderer::PipelineState*);
     static Fn set_pipeline_state_fn = []() -> Fn {
-        spdlog::info("[RenderContext::set_pipeline_state] Searching for RenderContext::set_pipeline_state");
+        REVR_LOG(spdlog::info("[RenderContext::set_pipeline_state] Searching for RenderContext::set_pipeline_state"));
 
         const auto game = utility::get_executable();
         const auto string_data = utility::scan_string(game, "UpdateDepthBlockerState");
 
         if (!string_data) {
-            spdlog::error("[RenderContext::set_pipeline_state] Failed to find UpdateDepthBlockerState string");
+            REVR_LOG(spdlog::error("[RenderContext::set_pipeline_state] Failed to find UpdateDepthBlockerState string"));
             return nullptr;
         }
 
         const auto string_ref = utility::scan_displacement_reference(game, *string_data);
 
         if (!string_ref) {
-            spdlog::error("[RenderContext::set_pipeline_state] Failed to find UpdateDepthBlockerState reference");
+            REVR_LOG(spdlog::error("[RenderContext::set_pipeline_state] Failed to find UpdateDepthBlockerState reference"));
             return nullptr;
         }
 
@@ -441,7 +442,7 @@ void RenderContext::set_pipeline_state(sdk::renderer::PipelineState* pipeline_st
             current_function_call = utility::scan_mnemonic(current_ip, 100, "CALL");
 
             if (!current_function_call) {
-                spdlog::error("[RenderContext::set_pipeline_state] Failed to find next CALL instruction");
+                REVR_LOG(spdlog::error("[RenderContext::set_pipeline_state] Failed to find next CALL instruction"));
                 return nullptr;
             }
 
@@ -451,11 +452,11 @@ void RenderContext::set_pipeline_state(sdk::renderer::PipelineState* pipeline_st
         const auto result = utility::resolve_displacement(*current_function_call);
 
         if (!result) {
-            spdlog::error("[RenderContext::set_pipeline_state] Failed to resolve displacement");
+            REVR_LOG(spdlog::error("[RenderContext::set_pipeline_state] Failed to resolve displacement"));
             return nullptr;
         }
 
-        spdlog::info("[RenderContext::set_pipeline_state] Found RenderContext::set_pipeline_state at {:x}", *result);
+        REVR_LOG(spdlog::info("[RenderContext::set_pipeline_state] Found RenderContext::set_pipeline_state at {:x}", *result));
 
         return (Fn)*result;
     }();
@@ -470,20 +471,20 @@ void RenderContext::set_pipeline_state(sdk::renderer::PipelineState* pipeline_st
 void RenderContext::dispatch_ray(uint32_t tgx, uint32_t tgy, uint32_t tgz, Fence& fence) {
     using Fn = void (*)(RenderContext*, uint32_t, uint32_t, uint32_t, Fence*);
     static auto func = []() -> Fn {
-        spdlog::info("[RenderContext::dispatch_ray] Searching for RenderContext::dispatch_ray");
+        REVR_LOG(spdlog::info("[RenderContext::dispatch_ray] Searching for RenderContext::dispatch_ray"));
 
         const auto game = utility::get_executable();
         const auto string_data = utility::scan_string(game, "PathSpaceRayTracing");
 
         if (!string_data) {
-            spdlog::error("[RenderContext::dispatch_ray] Failed to find PathSpaceRayTracing string");
+            REVR_LOG(spdlog::error("[RenderContext::dispatch_ray] Failed to find PathSpaceRayTracing string"));
             return nullptr;
         }
 
         const auto string_ref = utility::scan_displacement_reference(game, *string_data);
 
         if (!string_ref) {
-            spdlog::error("[RenderContext::dispatch_ray] Failed to find PathSpaceRayTracing reference");
+            REVR_LOG(spdlog::error("[RenderContext::dispatch_ray] Failed to find PathSpaceRayTracing reference"));
             return nullptr;
         }
 
@@ -500,7 +501,7 @@ void RenderContext::dispatch_ray(uint32_t tgx, uint32_t tgy, uint32_t tgz, Fence
             current_function_call = utility::scan_mnemonic(current_ip, 100, "CALL");
 
             if (!current_function_call) {
-                spdlog::error("[RenderContext::dispatch_ray] Failed to find next CALL instruction");
+                REVR_LOG(spdlog::error("[RenderContext::dispatch_ray] Failed to find next CALL instruction"));
                 return nullptr;
             }
 
@@ -510,11 +511,11 @@ void RenderContext::dispatch_ray(uint32_t tgx, uint32_t tgy, uint32_t tgz, Fence
         const auto result = utility::resolve_displacement(*current_function_call);
 
         if (!result) {
-            spdlog::error("[RenderContext::dispatch_ray] Failed to resolve displacement");
+            REVR_LOG(spdlog::error("[RenderContext::dispatch_ray] Failed to resolve displacement"));
             return nullptr;
         }
 
-        spdlog::info("[RenderContext::dispatch_ray] Found RenderContext::dispatch_ray at {:x}", *result);
+        REVR_LOG(spdlog::info("[RenderContext::dispatch_ray] Found RenderContext::dispatch_ray at {:x}", *result));
 
         return (Fn)*result;
     }();
@@ -529,20 +530,20 @@ void RenderContext::dispatch_ray(uint32_t tgx, uint32_t tgy, uint32_t tgz, Fence
 void RenderContext::dispatch_32bit_constant(uint32_t tgx, uint32_t tgy, uint32_t tgz, uint32_t constant, bool disable_uav_barrier) {
     using Fn = void (*)(RenderContext*, uint32_t, uint32_t, uint32_t, uint32_t, bool);
     static auto func = []() -> Fn {
-        spdlog::info("[RenderContext::dispatch_32bit_constant] Searching for RenderContext::dispatch_32bit_constant");
+        REVR_LOG(spdlog::info("[RenderContext::dispatch_32bit_constant] Searching for RenderContext::dispatch_32bit_constant"));
 
         const auto game = utility::get_executable();
         const auto string_data = utility::scan_string(game, "ClearDepthBlockerState");
 
         if (!string_data) {
-            spdlog::error("[RenderContext::dispatch_32bit_constant] Failed to find ClearDepthBlockerState string");
+            REVR_LOG(spdlog::error("[RenderContext::dispatch_32bit_constant] Failed to find ClearDepthBlockerState string"));
             return nullptr;
         }
 
         const auto string_ref = utility::scan_displacement_reference(game, *string_data);
 
         if (!string_ref) {
-            spdlog::error("[RenderContext::dispatch_32bit_constant] Failed to find ClearDepthBlockerState reference");
+            REVR_LOG(spdlog::error("[RenderContext::dispatch_32bit_constant] Failed to find ClearDepthBlockerState reference"));
             return nullptr;
         }
 
@@ -559,7 +560,7 @@ void RenderContext::dispatch_32bit_constant(uint32_t tgx, uint32_t tgy, uint32_t
             current_function_call = utility::scan_mnemonic(current_ip, 100, "CALL");
 
             if (!current_function_call) {
-                spdlog::error("[RenderContext::dispatch_32bit_constant] Failed to find next CALL instruction");
+                REVR_LOG(spdlog::error("[RenderContext::dispatch_32bit_constant] Failed to find next CALL instruction"));
                 return nullptr;
             }
 
@@ -569,11 +570,11 @@ void RenderContext::dispatch_32bit_constant(uint32_t tgx, uint32_t tgy, uint32_t
         const auto result = utility::resolve_displacement(*current_function_call);
 
         if (!result) {
-            spdlog::error("[RenderContext::dispatch_32bit_constant] Failed to resolve displacement");
+            REVR_LOG(spdlog::error("[RenderContext::dispatch_32bit_constant] Failed to resolve displacement"));
             return nullptr;
         }
 
-        spdlog::info("[RenderContext::dispatch_32bit_constant] Found RenderContext::dispatch_32bit_constant at {:x}", *result);
+        REVR_LOG(spdlog::info("[RenderContext::dispatch_32bit_constant] Found RenderContext::dispatch_32bit_constant at {:x}", *result));
 
         return (Fn)*result;
     }();
@@ -588,14 +589,14 @@ void RenderContext::dispatch_32bit_constant(uint32_t tgx, uint32_t tgy, uint32_t
 void RenderContext::dispatch(uint32_t tgx, uint32_t tgy, uint32_t tgz, bool disable_uav_barrier) {
     using Fn = void (*)(RenderContext*, uint32_t, uint32_t, uint32_t, bool);
     static auto func = []() -> Fn {
-        spdlog::info("[RenderContext::dispatch] Searching for RenderContext::dispatch");
+        REVR_LOG(spdlog::info("[RenderContext::dispatch] Searching for RenderContext::dispatch"));
 
         const auto game = utility::get_executable();
         std::optional<uintptr_t> string_data{};
         const auto all_strings = utility::scan_strings(game, "Reconstruct", true); // part of path space filter routine
 
         if (all_strings.empty()) {
-            spdlog::error("[RenderContext::dispatch] Failed to find Reconstruct strings");
+            REVR_LOG(spdlog::error("[RenderContext::dispatch] Failed to find Reconstruct strings"));
             return nullptr;
         }
 
@@ -607,14 +608,14 @@ void RenderContext::dispatch(uint32_t tgx, uint32_t tgy, uint32_t tgz, bool disa
         }
 
         if (!string_data) {
-            spdlog::error("[RenderContext::dispatch] Failed to find correct Reconstruct string");
+            REVR_LOG(spdlog::error("[RenderContext::dispatch] Failed to find correct Reconstruct string"));
             return nullptr;
         }
 
         const auto string_ref = utility::scan_displacement_reference(game, *string_data);
 
         if (!string_ref) {
-            spdlog::error("[RenderContext::dispatch] Failed to find Reconstruct reference");
+            REVR_LOG(spdlog::error("[RenderContext::dispatch] Failed to find Reconstruct reference"));
             return nullptr;
         }
 
@@ -631,7 +632,7 @@ void RenderContext::dispatch(uint32_t tgx, uint32_t tgy, uint32_t tgz, bool disa
             current_function_call = utility::scan_mnemonic(current_ip, 100, "CALL");
 
             if (!current_function_call) {
-                spdlog::error("[RenderContext::dispatch] Failed to find next CALL instruction");
+                REVR_LOG(spdlog::error("[RenderContext::dispatch] Failed to find next CALL instruction"));
                 return nullptr;
             }
 
@@ -641,11 +642,11 @@ void RenderContext::dispatch(uint32_t tgx, uint32_t tgy, uint32_t tgz, bool disa
         const auto result = utility::resolve_displacement(*current_function_call);
 
         if (!result) {
-            spdlog::error("[RenderContext::dispatch] Failed to resolve displacement");
+            REVR_LOG(spdlog::error("[RenderContext::dispatch] Failed to resolve displacement"));
             return nullptr;
         }
 
-        spdlog::info("[RenderContext::dispatch] Found RenderContext::dispatch at {:x}", *result);
+        REVR_LOG(spdlog::info("[RenderContext::dispatch] Found RenderContext::dispatch at {:x}", *result));
 
         return (Fn)*result;
     }();
@@ -661,7 +662,7 @@ sdk::renderer::command::Base* RenderContext::alloc(uint32_t t, uint32_t size) {
     // I am just being very lazy right now and just using a pattern instead of 
     // using copy_texture and scanning through the function for the first call
     static auto func = []() -> sdk::renderer::command::Base* (*)(RenderContext*, uint32_t, uint32_t) {
-        spdlog::info("Searching for RenderContext::alloc");
+        REVR_LOG(spdlog::info("Searching for RenderContext::alloc"));
 
         /*
             // In wilds this looks more like this
@@ -673,7 +674,7 @@ sdk::renderer::command::Base* RenderContext::alloc(uint32_t t, uint32_t size) {
         const auto scan_result = utility::scan(game, "48 8b ? 44 8d 42 38 e8 ? ? ? ?");
 
         if (!scan_result) {
-            spdlog::error("Failed to find RenderContext::alloc");
+            REVR_LOG(spdlog::error("Failed to find RenderContext::alloc"));
             return nullptr;
         }
 
@@ -770,7 +771,7 @@ void RenderContext::copy_texture(Texture* dest, Texture* src, Fence& fence) {
 
     using CopyTexFn = void (*)(RenderContext*, Texture*, Texture*, Fence&);
     static auto func = []() -> CopyTexFn {
-        spdlog::info("Searching for RenderContext::copy_texture");
+        REVR_LOG(spdlog::info("Searching for RenderContext::copy_texture"));
 
         std::vector<std::string> string_choices {
             // CopyTexture isn't directly behind InterleaveNormalDepthHalfWithoutGBuffer in DD2+
@@ -784,19 +785,19 @@ void RenderContext::copy_texture(Texture* dest, Texture* src, Fence& fence) {
         const auto game = utility::get_executable();
 
         for (const auto& str_choice : string_choices) {
-            spdlog::info("Scanning for string: {}", str_choice);
+            REVR_LOG(spdlog::info("Scanning for string: {}", str_choice));
 
             const auto string = utility::scan_string(game, str_choice, true);
 
             if (!string) {
-                spdlog::error("Failed to find copy_texture (no string)");
+                REVR_LOG(spdlog::error("Failed to find copy_texture (no string)"));
                 continue;
             }
 
             const auto string_ref = utility::scan_displacement_reference(game, *string);
 
             if (!string_ref) {
-                spdlog::error("Failed to find copy_texture (no string ref)");
+                REVR_LOG(spdlog::error("Failed to find copy_texture (no string ref)"));
                 continue;
             }
 
@@ -806,7 +807,7 @@ void RenderContext::copy_texture(Texture* dest, Texture* src, Fence& fence) {
                 const auto resolved = utility::resolve_instruction(ip);
 
                 if (!resolved) {
-                    spdlog::error("Failed to find copy_texture (could not resolve instruction)");
+                    REVR_LOG(spdlog::error("Failed to find copy_texture (could not resolve instruction)"));
                     continue;
                 }
 
@@ -815,7 +816,7 @@ void RenderContext::copy_texture(Texture* dest, Texture* src, Fence& fence) {
                 if (*(uint8_t*)ip == 0xE8) {
                     const auto result = (CopyTexFn)utility::calculate_absolute(ip + 1);
 
-                    spdlog::info("Found copy_texture: {:x}", (uintptr_t)result);
+                    REVR_LOG(spdlog::info("Found copy_texture: {:x}", (uintptr_t)result));
                     return result;
                 }
 
@@ -823,7 +824,7 @@ void RenderContext::copy_texture(Texture* dest, Texture* src, Fence& fence) {
             }
         }
 
-        spdlog::error("Could not find copy_texture, trying fallback");
+        REVR_LOG(spdlog::error("Could not find copy_texture, trying fallback"));
 
         // Look for alloc call behind RE_POSTPROCESS_Color
         /*
@@ -835,18 +836,18 @@ void RenderContext::copy_texture(Texture* dest, Texture* src, Fence& fence) {
         const auto basic_sig_scan = utility::scan(game, "BA 01 00 00 00 41 B8 30 00 00 00 E8 ? ? ? ? 48 85 C0");
 
         if (!basic_sig_scan) {
-            spdlog::error("Failed to find copy_texture (fallback)");
+            REVR_LOG(spdlog::error("Failed to find copy_texture (fallback)"));
             return nullptr;
         }
 
         const auto fn_start = utility::find_function_start_with_call(*basic_sig_scan);
 
         if (!fn_start) {
-            spdlog::error("Failed to find copy_texture (fallback fn_start)");
+            REVR_LOG(spdlog::error("Failed to find copy_texture (fallback fn_start)"));
             return nullptr;
         }
 
-        spdlog::info("Found copy_texture (fallback): {:x}", *fn_start);
+        REVR_LOG(spdlog::info("Found copy_texture (fallback): {:x}", *fn_start));
 
         return (CopyTexFn)*fn_start;
     }();
@@ -921,20 +922,20 @@ void remove_scene_view(void* scene_view) {
     static void (*remove_scene_view_fn)(void*) = nullptr;
 
     if (remove_scene_view_fn == nullptr) {
-        spdlog::info("[Renderer] Finding remove_scene_view_fn");
+        REVR_LOG(spdlog::info("[Renderer] Finding remove_scene_view_fn"));
 
         // Almost the same as add_scene_view pattern, is set up right after add_scene_view
         const auto mod = utility::get_executable();
         auto ref = utility::scan(mod, "4C 8D 05 ? ? ? ? 48 8D ? ? ? 48 8D ? 28 E8 ? ? ? ? 48 ? ? FF 15");
 
         if (!ref) {
-            spdlog::error("[Renderer] Failed to find remove_scene_view_fn");
+            REVR_LOG(spdlog::error("[Renderer] Failed to find remove_scene_view_fn"));
             return;
         }
 
         remove_scene_view_fn = (decltype(remove_scene_view_fn))utility::calculate_absolute(*ref + 3);
 
-        spdlog::info("[Renderer] remove_scene_view_fn: {:x}", (uintptr_t)remove_scene_view_fn);
+        REVR_LOG(spdlog::info("[Renderer] remove_scene_view_fn: {:x}", (uintptr_t)remove_scene_view_fn));
     }
 
     remove_scene_view_fn(scene_view);
@@ -944,19 +945,19 @@ RenderLayer* get_root_layer() {
     auto renderer = sdk::get_native_singleton("via.render.Renderer");
 
     if (renderer == nullptr) {
-        spdlog::error("[Renderer] Failed to find renderer");
+        REVR_LOG(spdlog::error("[Renderer] Failed to find renderer"));
         return nullptr;
     }
 
     static uint32_t root_layer_offset = 0;
 
     if (root_layer_offset == 0) {
-        spdlog::info("[Renderer] Finding root_layer_offset");
+        REVR_LOG(spdlog::info("[Renderer] Finding root_layer_offset"));
 
         auto get_output_layer_fn = sdk::find_native_method("via.render.Renderer", "getOutputLayer");
 
         if (get_output_layer_fn == nullptr) {
-            spdlog::error("[Renderer] Failed to find getOutputLayer");
+            REVR_LOG(spdlog::error("[Renderer] Failed to find getOutputLayer"));
 
             // Hacky fix for >= TDB74
             for (uint32_t i = 0; i < 0x10000; i += sizeof(void*)) {
@@ -976,7 +977,7 @@ RenderLayer* get_root_layer() {
                 }
             }
 
-            spdlog::error("[Renderer] Failed to find root_layer_offset with fallback");
+            REVR_LOG(spdlog::error("[Renderer] Failed to find root_layer_offset with fallback"));
 
             return nullptr;
         }
@@ -986,19 +987,19 @@ RenderLayer* get_root_layer() {
             get_output_layer_fn = (decltype(get_output_layer_fn))utility::calculate_absolute((uintptr_t)get_output_layer_fn + 1);
         } else {
             // Scan for jump with disassembler
-            spdlog::info("[Renderer] Scanning for getOutputLayer jmp");
+            REVR_LOG(spdlog::info("[Renderer] Scanning for getOutputLayer jmp"));
 
             const auto potential_jmp = utility::scan_opcode((uintptr_t)get_output_layer_fn, 10, 0xE9);
 
             if (potential_jmp) {
                 get_output_layer_fn = (decltype(get_output_layer_fn))utility::calculate_absolute(*potential_jmp + 1);
-                spdlog::info("[Renderer] Found getOutputLayer jmp, new function {:x}", (uintptr_t)get_output_layer_fn);
+                REVR_LOG(spdlog::info("[Renderer] Found getOutputLayer jmp, new function {:x}", (uintptr_t)get_output_layer_fn));
             } else {
-                spdlog::info("[Renderer] No jmp found");
+                REVR_LOG(spdlog::info("[Renderer] No jmp found"));
             }
         }
 
-        spdlog::info("[Renderer] Real getOutputLayer: {:x}", (uintptr_t)get_output_layer_fn);
+        REVR_LOG(spdlog::info("[Renderer] Real getOutputLayer: {:x}", (uintptr_t)get_output_layer_fn));
 
         // Find the offset to the root layer (RE3, RE8)
         auto ref = utility::scan((uintptr_t)get_output_layer_fn, 0x100, "48 8B 81 ? ? ? ?");
@@ -1013,14 +1014,14 @@ RenderLayer* get_root_layer() {
             }
 
             if (!ref) {
-                spdlog::error("[Renderer] Failed to find root_layer_offset");
+                REVR_LOG(spdlog::error("[Renderer] Failed to find root_layer_offset"));
                 return nullptr;
             }
         }
 
         root_layer_offset = *(uint32_t*)(*ref + 3);
 
-        spdlog::info("[Renderer] root_layer_offset: {:x}", root_layer_offset);
+        REVR_LOG(spdlog::info("[Renderer] root_layer_offset: {:x}", root_layer_offset));
     }
 
     return *(RenderLayer**)((uintptr_t)renderer + root_layer_offset);
@@ -1030,7 +1031,7 @@ RenderLayer* find_layer(::REType* layer_type) {
     auto renderer = sdk::get_native_singleton("via.render.Renderer");
 
     if (renderer == nullptr) {
-        spdlog::error("[Renderer] Failed to find renderer");
+        REVR_LOG(spdlog::error("[Renderer] Failed to find renderer"));
         return nullptr;
     }
 
@@ -1038,7 +1039,7 @@ RenderLayer* find_layer(::REType* layer_type) {
 
     // Scan through the renderer object to find a RenderLayer pointer
     if (layers_offset == 0) {
-        spdlog::info("[Renderer] Finding layers_offset");
+        REVR_LOG(spdlog::info("[Renderer] Finding layers_offset"));
 
         for (uint32_t i = 0; i < 0x10000; i += sizeof(void*)) {
             const auto ptr = *(REManagedObject**)((uintptr_t)renderer + i);
@@ -1058,11 +1059,11 @@ RenderLayer* find_layer(::REType* layer_type) {
         }
 
         if (layers_offset == 0) {
-            spdlog::error("[Renderer] Failed to find layers_offset");
+            REVR_LOG(spdlog::error("[Renderer] Failed to find layers_offset"));
             return nullptr;
         }
 
-        spdlog::info("[Renderer] layers_offset: {:x}", layers_offset);
+        REVR_LOG(spdlog::info("[Renderer] layers_offset: {:x}", layers_offset));
     }
 
     const auto& layers = *(std::array<RenderLayer*, 256>*)((uintptr_t)renderer + layers_offset);
@@ -1086,7 +1087,7 @@ sdk::renderer::layer::Output* get_output_layer() {
     auto renderer_t = sdk::find_type_definition("via.render.Renderer");
 
     if (renderer_t == nullptr) {
-        spdlog::error("[Renderer] Failed to find via.render.Renderer type");
+        REVR_LOG(spdlog::error("[Renderer] Failed to find via.render.Renderer type"));
         return nullptr;
     }
 
@@ -1183,20 +1184,20 @@ std::optional<Vector2f> world_to_screen(const Vector3f& world_pos) {
 */
 ConstantBuffer* create_constant_buffer(void* desc) {
     static auto fn = []() -> ConstantBuffer* (*)(void*, void*) {
-        spdlog::info("Searching for create_constant_buffer");
+        REVR_LOG(spdlog::info("Searching for create_constant_buffer"));
 
         const auto game = utility::get_executable();
         const auto string = utility::scan_string(game, "cbTransformBasePoints");
 
         if (!string) {
-            spdlog::error("Failed to find create_constant_buffer (no string)");
+            REVR_LOG(spdlog::error("Failed to find create_constant_buffer (no string)"));
             return nullptr;
         }
 
         const auto string_ref = utility::scan_displacement_reference(game, *string);
 
         if (!string_ref) {
-            spdlog::error("Failed to find create_constant_buffer (no string ref)");
+            REVR_LOG(spdlog::error("Failed to find create_constant_buffer (no string ref)"));
             return nullptr;
         }
 
@@ -1206,7 +1207,7 @@ ConstantBuffer* create_constant_buffer(void* desc) {
             const auto resolved = utility::resolve_instruction(ip);
 
             if (!resolved) {
-                spdlog::error("Failed to find create_constant_buffer (could not resolve instruction)");
+                REVR_LOG(spdlog::error("Failed to find create_constant_buffer (could not resolve instruction)"));
                 return nullptr;
             }
 
@@ -1215,7 +1216,7 @@ ConstantBuffer* create_constant_buffer(void* desc) {
             if (*(uint8_t*)ip == 0xE8) {
                 const auto result = (ConstantBuffer* (*)(void*, void*))utility::calculate_absolute(ip + 1);
 
-                spdlog::info("Found create_constant_buffer: {:x}", (uintptr_t)result);
+                REVR_LOG(spdlog::info("Found create_constant_buffer: {:x}", (uintptr_t)result));
                 return result;
             }
 
@@ -1247,19 +1248,19 @@ ConstantBuffer* create_constant_buffer(void* desc) {
 */
 TargetState* create_target_state(TargetState::Desc* desc) {
     static auto fn = []() -> TargetState* (*)(void*, TargetState::Desc*) {
-        spdlog::info("Searching for create_target_state");
+        REVR_LOG(spdlog::info("Searching for create_target_state"));
 
         const auto game = utility::get_executable();
         const auto string = utility::scan_string(game, "CircularDOF_SceneMipTexture");
 
         if (!string) {
-            spdlog::error("Failed to find create_target_state (no string)");
+            REVR_LOG(spdlog::error("Failed to find create_target_state (no string)"));
             return nullptr;
         }
 
         const auto string_ref = utility::scan_displacement_reference(game, *string);
 
-            spdlog::error("Failed to find create_target_state (no string ref)");
+            REVR_LOG(spdlog::error("Failed to find create_target_state (no string ref)"));
         if (!string_ref) {
             return nullptr;
         }
@@ -1271,7 +1272,7 @@ TargetState* create_target_state(TargetState::Desc* desc) {
             const auto resolved = utility::resolve_instruction(ip);
 
             if (!resolved) {
-                spdlog::error("Failed to find create_target_state (could not resolve instruction)");
+                REVR_LOG(spdlog::error("Failed to find create_target_state (could not resolve instruction)"));
                 return nullptr;
             }
 
@@ -1285,7 +1286,7 @@ TargetState* create_target_state(TargetState::Desc* desc) {
             if (*(uint8_t*)ip == 0xE8 && found_count == 3) {
                 const auto result = (TargetState* (*)(void*, TargetState::Desc*))utility::calculate_absolute(ip + 1);
 
-                spdlog::info("Found create_target_state: {:x}", (uintptr_t)result);
+                REVR_LOG(spdlog::info("Found create_target_state: {:x}", (uintptr_t)result));
                 return result;
             }
 
@@ -1317,20 +1318,20 @@ TargetState* create_target_state(TargetState::Desc* desc) {
 */
 Texture* create_texture(Texture::Desc* desc) {
     static auto fn = []() -> Texture* (*)(void*, Texture::Desc*) {
-        spdlog::info("Searching for create_texture");
+        REVR_LOG(spdlog::info("Searching for create_texture"));
 
         const auto game = utility::get_executable();
         const auto string = utility::scan_string(game, L"width=%u,height=%u,depth=%u,mip=%u,array=%u,format=%u,usage=%u,bind=%u");
 
         if (!string) {
-            spdlog::error("Failed to find create_texture (no string)");
+            REVR_LOG(spdlog::error("Failed to find create_texture (no string)"));
             return nullptr;
         }
 
         const auto string_ref = utility::scan_displacement_reference(game, *string);
 
         if (!string_ref) {
-            spdlog::error("Failed to find create_texture (no string ref)");
+            REVR_LOG(spdlog::error("Failed to find create_texture (no string ref)"));
             return nullptr;
         }
 
@@ -1340,7 +1341,7 @@ Texture* create_texture(Texture::Desc* desc) {
             const auto resolved = utility::resolve_instruction(ip);
 
             if (!resolved) {
-                spdlog::error("Failed to find create_texture (could not resolve instruction)");
+                REVR_LOG(spdlog::error("Failed to find create_texture (could not resolve instruction)"));
                 return nullptr;
             }
 
@@ -1349,39 +1350,39 @@ Texture* create_texture(Texture::Desc* desc) {
             if (*(uint8_t*)ip == 0xE8) {
                 const auto result = (Texture* (*)(void*, Texture::Desc*))utility::calculate_absolute(ip + 1);
 
-                spdlog::info("Found create_texture: {:x}", (uintptr_t)result);
+                REVR_LOG(spdlog::info("Found create_texture: {:x}", (uintptr_t)result));
                 return result;
             }
 
             ip -= 1;
         }
 
-        spdlog::error("Failed to find create_texture, trying fallback");
+        REVR_LOG(spdlog::error("Failed to find create_texture, trying fallback"));
 
         const auto fn_start = utility::find_function_start_with_call(*string_ref);
 
         if (!fn_start) {
-            spdlog::error("Failed to find create_texture (no fallback)");
+            REVR_LOG(spdlog::error("Failed to find create_texture (no fallback)"));
             return nullptr;
         }
 
         const auto first_call = utility::scan_mnemonic(*fn_start, 100, "CALL");
 
         if (!first_call) {
-            spdlog::error("Failed to find create_texture (no first call)");
+            REVR_LOG(spdlog::error("Failed to find create_texture (no first call)"));
             return nullptr;
         }
 
         const auto second_call = utility::scan_mnemonic(*first_call + 1, 100, "CALL");
 
         if (!second_call) {
-            spdlog::error("Failed to find create_texture (no second call)");
+            REVR_LOG(spdlog::error("Failed to find create_texture (no second call)"));
             return nullptr;
         }
 
         auto result = (Texture* (*)(void*, Texture::Desc*))utility::calculate_absolute(*second_call + 1);
 
-        spdlog::info("Found create_texture (fallback): {:x}", (uintptr_t)result);
+        REVR_LOG(spdlog::info("Found create_texture (fallback): {:x}", (uintptr_t)result));
 
         return result;
     }();
@@ -1439,28 +1440,28 @@ E8 ? ? ? ?                                    call    create_render_target_view
 */
 RenderTargetView* create_render_target_view(sdk::renderer::RenderResource* resource, void* desc) {
     static auto fn = []() -> RenderTargetView* (*)(void*, sdk::renderer::RenderResource* resource, void*) {
-        spdlog::info("Searching for create_render_target_view");
+        REVR_LOG(spdlog::info("Searching for create_render_target_view"));
 
         const auto game = utility::get_executable();
         const auto ref = utility::scan(game, "44 89 7C 24 2C C7 44 24 20 1C 00 00 00 E8 ? ? ? ?");
 
         if (!ref) {
-            spdlog::info("Could not find first ref, performing fallback scan");
+            REVR_LOG(spdlog::info("Could not find first ref, performing fallback scan"));
             const auto ref2 = utility::scan(game, "4C 8D 45 B8 49 8B CE E8 ? ? ? ?");
 
             if (ref2) {
                 const auto result = (RenderTargetView* (*)(void*, sdk::renderer::RenderResource*, void*))utility::calculate_absolute(*ref2 + 8);
-                spdlog::info("Found create_render_target_view: {:x}", (uintptr_t)result);
+                REVR_LOG(spdlog::info("Found create_render_target_view: {:x}", (uintptr_t)result));
 
                 return result;
             }
 
-            spdlog::error("Failed to find create_render_target_view (no ref)");
+            REVR_LOG(spdlog::error("Failed to find create_render_target_view (no ref)"));
             return nullptr;
         }
 
         const auto result = (RenderTargetView* (*)(void*, sdk::renderer::RenderResource*, void*))utility::calculate_absolute(*ref + 14);
-        spdlog::info("Found create_render_target_view: {:x}", (uintptr_t)result);
+        REVR_LOG(spdlog::info("Found create_render_target_view: {:x}", (uintptr_t)result));
 
         return result;
     }();
@@ -1639,12 +1640,12 @@ void*& layer::Output::get_present_state() {
     static uint32_t output_target_offset = 0;
 
     if (output_target_offset == 0) {
-        spdlog::info("[Renderer] Finding output_target_offset");
+        REVR_LOG(spdlog::info("[Renderer] Finding output_target_offset"));
 
         auto get_scene_view_fn = sdk::find_native_method("via.render.layer.Output", "get_SceneView");
 
         if (get_scene_view_fn == nullptr) {
-            spdlog::error("[Renderer] Failed to find get_SceneView");
+            REVR_LOG(spdlog::error("[Renderer] Failed to find get_SceneView"));
             return *(void**)((uintptr_t)this + sdk::find_type_definition("via.render.RenderLayer")->get_size());
         }
 
@@ -1657,7 +1658,7 @@ void*& layer::Output::get_present_state() {
         // First instruction is a mov, so we don't need to pattern scan for it
         output_target_offset = *(uint8_t*)((uintptr_t)get_scene_view_fn + 3);
 
-        spdlog::info("[Renderer] output_target_offset: {:x}", output_target_offset);
+        REVR_LOG(spdlog::info("[Renderer] output_target_offset: {:x}", output_target_offset));
     }
 
     return *(void**)((uintptr_t)this + output_target_offset);
@@ -1667,14 +1668,14 @@ REManagedObject*& layer::Output::get_scene_view() {
     static uint32_t scene_view_offset = 0;
 
     if (scene_view_offset == 0) {
-        spdlog::info("[Renderer] Finding scene_view_offset");
+        REVR_LOG(spdlog::info("[Renderer] Finding scene_view_offset"));
 
         // because if this is a manually created output layer,
         // we might not have the scene view and output state set up yet
         auto top_output_layer = sdk::renderer::get_output_layer();
 
         if (top_output_layer == nullptr) {
-            spdlog::error("[Renderer] Failed to find top_output_layer");
+            REVR_LOG(spdlog::error("[Renderer] Failed to find top_output_layer"));
             return *(REManagedObject**)((uintptr_t)this + 0);
         }
 
@@ -1684,12 +1685,12 @@ REManagedObject*& layer::Output::get_scene_view() {
         const auto output_target = top_output_layer->get_present_state();
 
         if (scene_view == nullptr) {
-            spdlog::error("[Renderer] Failed to find scene_view");
+            REVR_LOG(spdlog::error("[Renderer] Failed to find scene_view"));
             return *(REManagedObject**)((uintptr_t)this + 0);
         }
 
         if (output_target == nullptr) {
-            spdlog::error("[Renderer] Failed to find output_target");
+            REVR_LOG(spdlog::error("[Renderer] Failed to find output_target"));
             return *(REManagedObject**)((uintptr_t)this + 0);
         }
 
@@ -1701,7 +1702,7 @@ REManagedObject*& layer::Output::get_scene_view() {
             }
         }
 
-        spdlog::info("[Renderer] scene_view_offset: {:x}", scene_view_offset);
+        REVR_LOG(spdlog::info("[Renderer] scene_view_offset: {:x}", scene_view_offset));
     }
 
     return *(REManagedObject**)((uintptr_t)get_present_state() + scene_view_offset);

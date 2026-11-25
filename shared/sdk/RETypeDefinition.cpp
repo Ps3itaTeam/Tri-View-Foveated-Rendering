@@ -1,8 +1,10 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <deque>
 #include <mutex>
 #include <shared_mutex>
 #include <execution>
 #include <sstream>
+#include <memory>
 
 #include <spdlog/spdlog.h>
 
@@ -11,6 +13,7 @@
 
 #include "RETypeDB.hpp"
 #include "RETypeDefinition.hpp"
+#include "NameCache.hpp"
 
 namespace sdk {
 struct RETypeDefinition;
@@ -371,7 +374,7 @@ sdk::RETypeDefinition* RETypeDefinition::get_underlying_type() const {
     if (get_underlying_type_method == nullptr) {
         std::unique_lock _{ g_underlying_mtx };
         g_underlying_types[this] = nullptr;
-        SPDLOG_WARN("[RETypeDefinition] Failed to find GetUnderlyingType method for {}", this->get_full_name());
+        REVR_LOG(SPDLOG_WARN("[RETypeDefinition] Failed to find GetUnderlyingType method for {}", this->get_full_name()));
         return nullptr;
     }
 
@@ -433,7 +436,14 @@ sdk::RETypeDefinition* RETypeDefinition::get_generic_type_definition() const {
 static std::shared_mutex g_field_mtx{};
 static std::unordered_map<const sdk::RETypeDefinition*, std::unordered_map<size_t, sdk::REField*>> g_field_map{};
 
+// [CPU 04.11.2026] the full lookup below behind a per-thread front (see NameCache.hpp)
 sdk::REField* RETypeDefinition::get_field(std::string_view name) const {
+    thread_local const auto t_front = std::make_unique<namecache::Table<sdk::REField*>>();
+
+    return t_front->get(this, name, [&]() { return get_field_uncached(name); });
+}
+
+sdk::REField* RETypeDefinition::get_field_uncached(std::string_view name) const {
     const auto name_hash = std::hash<std::string_view>{}(name);
     {
         std::shared_lock _{ g_field_mtx };
@@ -465,7 +475,14 @@ sdk::REField* RETypeDefinition::get_field(std::string_view name) const {
 static std::shared_mutex g_method_mtx{};
 static std::unordered_map<const sdk::RETypeDefinition*, std::unordered_map<size_t, sdk::REMethodDefinition*>> g_method_map{};
 
+// [CPU 04.11.2026] the full lookup below behind a per-thread front (see NameCache.hpp)
 sdk::REMethodDefinition* RETypeDefinition::get_method(std::string_view name) const {
+    thread_local const auto t_front = std::make_unique<namecache::Table<sdk::REMethodDefinition*>>();
+
+    return t_front->get(this, name, [&]() { return get_method_uncached(name); });
+}
+
+sdk::REMethodDefinition* RETypeDefinition::get_method_uncached(std::string_view name) const {
     const auto name_hash = std::hash<std::string_view>{}(name);
 
     {

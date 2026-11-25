@@ -16,6 +16,7 @@ public:
 
     void on_frame() override;
     void on_draw_ui() override;
+    bool wants_transform_hooks() const override { return true; } // [CPU 03.11.2026] see Mod::wants_transform_hooks
     void on_update_transform(RETransform* transform) override;
     void on_pre_application_entry(void* entry, const char* name, size_t hash) override;
 

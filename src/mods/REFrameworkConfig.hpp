@@ -49,7 +49,11 @@ private:
     ModToggle::Ptr m_always_show_cursor{ ModToggle::create(generate_name("DrawCursorWithMenuOpen"), false) };
 #endif
     ModKey::Ptr m_show_cursor_key{ ModKey::create(generate_name("ShowCursorKey")) };
+#if defined(RE7) || defined(RE2)
+    ModInt32::Ptr m_font_size{ModInt32::create(generate_name("FontSize"), 32)}; // [fix143 23.11.2026] RE7, [fix144] RE2: the user's menu text size
+#else
     ModInt32::Ptr m_font_size{ModInt32::create(generate_name("FontSize"), 16)};
+#endif
     // [RE4 1.5.9.0 TEXTURLAYOUT 2026-09-09]
     //  -1 = automatisch nach der Version der re4.exe (Standard)
     //   0 = Layout bis 1.1.1.0 erzwingen

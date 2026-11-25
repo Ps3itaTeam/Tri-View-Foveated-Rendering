@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <sdk/REMath.hpp>
 #include <spdlog/spdlog.h>
 
@@ -345,7 +346,7 @@ Vector4f calculate_tpose_pos_world(::RETransform& transform, REJoint* joint, uin
 
 void apply_joints_tpose(::RETransform& transform, const std::vector<REJoint*>& joints_initial, uint32_t additional_parents) {
     if (joints_initial.empty() || joints_initial[0] == nullptr) {
-        spdlog::info("No joints to apply tpose");
+        REVR_LOG(spdlog::info("No joints to apply tpose"));
         return;
     }
     

@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <algorithm>
 #include <cmath>
 
@@ -22,7 +23,17 @@ std::optional<std::string> OverlayComponent::on_initialize_openvr() {
     m_overlay_data = {};
 
     // create vr overlay
-    auto overlay_error = vr::VROverlay()->CreateOverlay("REFramework", "REFramework", &m_overlay_handle);
+    // [FOREIGN OVERLAY 12.11.2026] RE7VR Reloaded's re7_vr_settings_overlay.dll looks up the overlay key "REFramework"
+    // and hooks IVROverlay to hide that overlay's texture and pointer (its own menu replaces it), which leaves this
+    // menu invisible in the headset. With that plugin loaded the menu gets a key of its own.
+    const bool foreign_overlay = GetModuleHandleW(L"re7_vr_settings_overlay.dll") != nullptr;
+    const char* const overlay_key = foreign_overlay ? "REFramework.REVR" : "REFramework";
+
+    if (foreign_overlay) {
+        REVR_LOG(spdlog::info("[VR] re7_vr_settings_overlay.dll loaded: menu overlay key {}", overlay_key));
+    }
+
+    auto overlay_error = vr::VROverlay()->CreateOverlay(overlay_key, "REFramework", &m_overlay_handle);
 
     if (overlay_error != vr::VROverlayError_None) {
         return "VROverlay failed to create overlay: " + std::string{vr::VROverlay()->GetOverlayErrorNameFromEnum(overlay_error)};
@@ -45,7 +56,7 @@ std::optional<std::string> OverlayComponent::on_initialize_openvr() {
     vr::VRSystem()->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0.0f, &pose, 1);
     vr::VROverlay()->SetOverlayTransformAbsolute(m_overlay_handle, vr::TrackingUniverseStanding, &pose.mDeviceToAbsoluteTracking);
 
-    spdlog::info("Made overlay with handle {}", m_overlay_handle);
+    REVR_LOG(spdlog::info("Made overlay with handle {}", m_overlay_handle));
 
     return std::nullopt;
 }
@@ -466,7 +477,10 @@ void OverlayComponent::update_overlay() {
         auto rt = drawing_ui ? g_framework->get_rendertarget_d3d11() : g_framework->get_blank_rendertarget_d3d11();
         vr::Texture_t imgui_tex{(void*)rt.Get(), vr::TextureType_DirectX, vr::ColorSpace_Auto};
         vr::VROverlay()->SetOverlayTexture(m_overlay_handle, &imgui_tex);
-    } else {
+    } else if (drawing_ui || !m_overlay_data.blank_sent) {
+        // [GPU 30.10.2026] the blank texture only once: SteamVR keeps an overlay's last texture, and every SetOverlayTexture
+        // copies the texture on the game's queue (a 1920 x 1080 copy each frame with the menu closed, 0.03 ms of GPU in the
+        // profile of 30.10.2026)
         auto& hook = g_framework->get_d3d12_hook();
 
         vr::D3D12TextureData_t texture_data {
@@ -477,6 +491,7 @@ void OverlayComponent::update_overlay() {
 
         vr::Texture_t imgui_tex{(void*)&texture_data, vr::TextureType_DirectX12, vr::ColorSpace_Auto};
         vr::VROverlay()->SetOverlayTexture(m_overlay_handle, &imgui_tex);
+        m_overlay_data.blank_sent = !drawing_ui;
     }
 }
 

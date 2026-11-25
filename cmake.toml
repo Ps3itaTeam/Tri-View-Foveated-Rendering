@@ -77,23 +77,8 @@ tag = "2a706fd2ba355808cada31ac1eed8ce28caa6b37"
 git = "https://github.com/KhronosGroup/OpenXR-SDK"
 tag = "458984d7f59d1ae6dc1b597d94b02e4f7132eaba"
 
-[target.pdperfmod]
-type = "shared"
-include-directories = ["dependencies/pd-perfmod/include"]
-sources = ["dependencies/pd-perfmod/dummy/**.cpp"]
-condition = "build-framework-dependencies"
-
-[target.pdperfmod.properties]
-OUTPUT_NAME = "PDPerfPlugin"
-
-[target.pdafwmod]
-type = "shared"
-include-directories = ["dependencies/pd-afwmod/include"]
-sources = ["dependencies/pd-afwmod/dummy/**.cpp"]
-condition = "build-framework-dependencies"
-
-[target.pdafwmod.properties]
-OUTPUT_NAME = "PDAFWPlugin"
+# [NO PLUGIN fix91 19.11.2026] the target of the old upscaler plugin (a stand-in DLL to link against) was here: the mod no
+# longer uses the upscaler plugin
 
 [fetch-content.directxtk]
 git = "https://github.com/microsoft/DirectXTK"
@@ -256,9 +241,7 @@ link-libraries = [
     "openxr_loader",
     "delayimp",
     "DirectXTK",
-    "DirectXTK12",
-    "pdperfmod",
-    "pdafwmod"
+    "DirectXTK12"
 ]
 cmake-before="""
 """
@@ -277,12 +260,17 @@ add_custom_command(
 if(CMKR_TARGET STREQUAL "RE4")
     target_sources(${CMKR_TARGET} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources/re4_taunts.rc")
     target_link_libraries(${CMKR_TARGET} PRIVATE winmm)
+
+    # [MENU TEXT fix159 25.11.2026] Talemann's RE4VR mods (src/mods/vr/games/RE4VR*.cpp) stay as he wrote them: their
+    # menu widgets get the labels that fit the panel (menu_text, Mod.hpp) through this definition, set for those files only.
+    file(GLOB REVR_TALEMANN_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/mods/vr/games/RE4VR*.cpp")
+    set_source_files_properties(${REVR_TALEMANN_SOURCES} PROPERTIES COMPILE_DEFINITIONS "REVR_TALEMANN_MENU_TEXT")
 endif()
 """
 
 [template.game.properties]
 OUTPUT_NAME = "dinput8"
-LINK_FLAGS = "/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:PDPerfPlugin.dll /DELAYLOAD:PDAFWPlugin.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
+LINK_FLAGS = "/DELAYLOAD:openvr_api.dll /DELAYLOAD:openxr_loader.dll /DELAYLOAD:d3d11.dll /DELAYLOAD:d3d12.dll /DELAYLOAD:D3DCOMPILER_47.dll"
 RUNTIME_OUTPUT_DIRECTORY_RELEASE = "${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO = "${CMAKE_BINARY_DIR}/bin/${CMKR_TARGET}"
 LIBRARY_OUTPUT_DIRECTORY_RELEASE = "${CMAKE_BINARY_DIR}/lib/${CMKR_TARGET}"

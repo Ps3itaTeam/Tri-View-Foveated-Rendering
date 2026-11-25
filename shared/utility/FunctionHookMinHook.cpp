@@ -1,3 +1,4 @@
+#include "ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <spdlog/spdlog.h>
 #include <MinHook.h>
 
@@ -13,7 +14,7 @@ FunctionHookMinHook::FunctionHookMinHook(Address target, Address destination)
     m_destination{ 0 },
     m_original{ 0 }
 {
-    spdlog::info("Attempting to hook {:p}->{:p}", target.ptr(), destination.ptr());
+    REVR_LOG(spdlog::info("Attempting to hook {:p}->{:p}", target.ptr(), destination.ptr()));
 
     // Initialize MinHook if it hasn't been already.
     if (!g_isMinHookInitialized && MH_Initialize() == MH_OK) {
@@ -25,10 +26,10 @@ FunctionHookMinHook::FunctionHookMinHook(Address target, Address destination)
         m_target = target;
         m_destination = destination;
 
-        spdlog::info("Hook init successful {:p}->{:p}", target.ptr(), destination.ptr());
+        REVR_LOG(spdlog::info("Hook init successful {:p}->{:p}", target.ptr(), destination.ptr()));
     }
     else {
-        spdlog::error("Failed to hook {:p}: {}", target.ptr(), MH_StatusToString(status));
+        REVR_LOG(spdlog::error("Failed to hook {:p}: {}", target.ptr(), MH_StatusToString(status)));
     }
 }
 
@@ -38,7 +39,7 @@ FunctionHookMinHook::~FunctionHookMinHook() {
 
 bool FunctionHookMinHook::create() {
     if (m_target == 0 || m_destination == 0 || m_original == 0) {
-        spdlog::error("FunctionHookMinHook not initialized");
+        REVR_LOG(spdlog::error("FunctionHookMinHook not initialized"));
         return false;
     }
 
@@ -47,11 +48,11 @@ bool FunctionHookMinHook::create() {
         m_destination = 0;
         m_target = 0;
 
-        spdlog::error("Failed to hook {:x}: {}", m_target, MH_StatusToString(status));
+        REVR_LOG(spdlog::error("Failed to hook {:x}: {}", m_target, MH_StatusToString(status)));
         return false;
     }
 
-    spdlog::info("Hooked {:x}->{:x}", m_target, m_destination);
+    REVR_LOG(spdlog::info("Hooked {:x}->{:x}", m_target, m_destination));
     return true;
 }
 

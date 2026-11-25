@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <algorithm>
 #include <climits>
 #include <cstring>
@@ -7,6 +8,7 @@
 #include <spdlog/spdlog.h>
 
 #include "SharpenPass.hpp"
+#include "ShaderCompile.hpp" // [BUILT-IN SHADERS fix145] compile_shader
 #include "SmaaData.inl"   // [POST_PASS SMAA 28.09.2026]
 
 #pragma comment(lib, "d3dcompiler")
@@ -85,10 +87,10 @@ bool SharpenPass::setup(ID3D12Device* device) {
     ComPtr<ID3DBlob> shader{};
     ComPtr<ID3DBlob> errors{};
 
-    if (FAILED(D3DCompile(CAS_SHADER, sizeof(CAS_SHADER) - 1, nullptr, nullptr, nullptr, "main",
+    if (FAILED(compile_shader(CAS_SHADER, sizeof(CAS_SHADER) - 1, nullptr, nullptr, nullptr, "main",
                           "cs_5_0", 0, 0, &shader, &errors))) {
-        spdlog::error("[SharpenPass] Shader liess sich nicht uebersetzen: {}",
-                      errors != nullptr ? (const char*)errors->GetBufferPointer() : "?");
+        REVR_LOG(spdlog::error("[SharpenPass] Shader liess sich nicht uebersetzen: {}",
+                      errors != nullptr ? (const char*)errors->GetBufferPointer() : "?"));
         return false;
     }
 
@@ -123,13 +125,13 @@ bool SharpenPass::setup(ID3D12Device* device) {
 
     if (FAILED(D3D12SerializeRootSignature(&rs_desc, D3D_ROOT_SIGNATURE_VERSION_1, &rs_blob,
                                            &errors))) {
-        spdlog::error("[SharpenPass] Root Signature fehlgeschlagen");
+        REVR_LOG(spdlog::error("[SharpenPass] Root Signature fehlgeschlagen"));
         return false;
     }
 
     if (FAILED(device->CreateRootSignature(0, rs_blob->GetBufferPointer(), rs_blob->GetBufferSize(),
                                            IID_PPV_ARGS(&m_root_sig)))) {
-        spdlog::error("[SharpenPass] CreateRootSignature fehlgeschlagen");
+        REVR_LOG(spdlog::error("[SharpenPass] CreateRootSignature fehlgeschlagen"));
         return false;
     }
 
@@ -139,7 +141,7 @@ bool SharpenPass::setup(ID3D12Device* device) {
     pso_desc.CS.BytecodeLength = shader->GetBufferSize();
 
     if (FAILED(device->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&m_pso)))) {
-        spdlog::error("[SharpenPass] CreateComputePipelineState fehlgeschlagen");
+        REVR_LOG(spdlog::error("[SharpenPass] CreateComputePipelineState fehlgeschlagen"));
         m_root_sig.Reset();
         return false;
     }
@@ -153,7 +155,7 @@ bool SharpenPass::setup(ID3D12Device* device) {
     heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
     if (FAILED(device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&m_heap)))) {
-        spdlog::error("[SharpenPass] CreateDescriptorHeap fehlgeschlagen");
+        REVR_LOG(spdlog::error("[SharpenPass] CreateDescriptorHeap fehlgeschlagen"));
         m_pso.Reset();
         m_root_sig.Reset();
         return false;
@@ -161,7 +163,7 @@ bool SharpenPass::setup(ID3D12Device* device) {
 
     m_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-    spdlog::info("[SharpenPass] bereit (CAS, Compute, in place)");
+    REVR_LOG(spdlog::info("[SharpenPass] bereit (CAS, Compute, in place)"));
 
     return true;
 }
@@ -210,7 +212,7 @@ int32_t SharpenPass::ensure_target(ID3D12Device* device, ID3D12Resource* src) {
     if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &tex,
                                                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
                                                IID_PPV_ARGS(&slot.target)))) {
-        spdlog::error("[SharpenPass] Zwischentextur konnte nicht angelegt werden");
+        REVR_LOG(spdlog::error("[SharpenPass] Zwischentextur konnte nicht angelegt werden"));
         slot.src = nullptr;
 
         return -1;
@@ -366,6 +368,8 @@ cbuffer Params : register(b0) {
     uint  g_srgb_out;   // 1 = Ergebnis nach SRGB kodieren
     float g_gamma;      // [BRIGHTNESS 28.09.2026] Exponent, 1 = unveraendert, <1 heller
     float g_contrast;   // [CONTRAST 28.09.2026] Faktor um Mittelgrau, 1 = unveraendert
+    float g_edge;       // [EDGE SOFTEN 11.11.2026] weight of the neighbours' mean on an edge, 0 = off
+    float g_edge_t;     //                         luma range from which an edge counts
 };
 
 static const float3 LUMA = float3(0.2126, 0.7152, 0.0722);
@@ -391,12 +395,35 @@ void main(uint3 id : SV_DispatchThreadID) {
     const float4 c4 = tap4(p);
     float3 c = c4.rgb;
 
-    if (g_sharp > 0.0) {
-        const float3 blur = (tap4(p + int2(0, -1)).rgb + tap4(p + int2(0, 1)).rgb
-                           + tap4(p + int2(-1, 0)).rgb + tap4(p + int2(1, 0)).rgb) * 0.25;
-        float d = dot(c - blur, LUMA) * g_sharp;
-        d = clamp(d, -CLAMP_MAX, CLAMP_MAX);
-        c += d;
+    if (g_sharp > 0.0 || g_edge > 0.0) {
+        const float3 n0 = tap4(p + int2(0, -1)).rgb;
+        const float3 n1 = tap4(p + int2(0, 1)).rgb;
+        const float3 n2 = tap4(p + int2(-1, 0)).rgb;
+        const float3 n3 = tap4(p + int2(1, 0)).rgb;
+        const float3 blur = (n0 + n1 + n2 + n3) * 0.25;
+        // [EDGE SOFTEN 11.11.2026] e = 1 on high-contrast edges (luma range of the pixel and its 4 neighbours, measured
+        // in display encoding), 0 on flat areas and fine texture: there the sharpening stays, on edges the neighbours'
+        // mean is blended in instead
+        float e = 0.0;
+
+        if (g_edge > 0.0) {
+            const bool lin = g_srgb_out != 0;
+            const float lc = dot(lin ? to_srgb(c) : c, LUMA);
+            const float l0 = dot(lin ? to_srgb(n0) : n0, LUMA);
+            const float l1 = dot(lin ? to_srgb(n1) : n1, LUMA);
+            const float l2 = dot(lin ? to_srgb(n2) : n2, LUMA);
+            const float l3 = dot(lin ? to_srgb(n3) : n3, LUMA);
+            const float range = max(lc, max(max(l0, l1), max(l2, l3))) - min(lc, min(min(l0, l1), min(l2, l3)));
+            e = smoothstep(g_edge_t, g_edge_t + 0.1, range);
+        }
+
+        if (g_sharp > 0.0) {
+            float d = dot(c - blur, LUMA) * g_sharp * (1.0 - e);
+            d = clamp(d, -CLAMP_MAX, CLAMP_MAX);
+            c += d;
+        }
+
+        c = lerp(c, blur, g_edge * e);
     }
 
     if (g_sat != 1.0) {
@@ -476,10 +503,10 @@ bool PostPass::setup(ID3D12Device* device) {
     ComPtr<ID3DBlob> shader{};
     ComPtr<ID3DBlob> errors{};
 
-    if (FAILED(D3DCompile(POST_SHADER, sizeof(POST_SHADER) - 1, nullptr, nullptr, nullptr, "main",
+    if (FAILED(compile_shader(POST_SHADER, sizeof(POST_SHADER) - 1, nullptr, nullptr, nullptr, "main",
                           "cs_5_0", 0, 0, &shader, &errors))) {
-        spdlog::error("[PostPass] Shader liess sich nicht uebersetzen: {}",
-                      errors != nullptr ? (const char*)errors->GetBufferPointer() : "?");
+        REVR_LOG(spdlog::error("[PostPass] Shader liess sich nicht uebersetzen: {}",
+                      errors != nullptr ? (const char*)errors->GetBufferPointer() : "?"));
         return false;
     }
 
@@ -497,7 +524,7 @@ bool PostPass::setup(ID3D12Device* device) {
     params[0].DescriptorTable.pDescriptorRanges = ranges;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[1].Constants.Num32BitValues = 7;   // [28.09.2026] +Helligkeit +Kontrast
+    params[1].Constants.Num32BitValues = 9;   // [28.09.2026] +Helligkeit +Kontrast, [EDGE SOFTEN 11.11.2026] +edge, +threshold
     params[1].Constants.ShaderRegister = 0;
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
@@ -510,7 +537,7 @@ bool PostPass::setup(ID3D12Device* device) {
     if (FAILED(D3D12SerializeRootSignature(&rs_desc, D3D_ROOT_SIGNATURE_VERSION_1, &rs_blob, &errors))
         || FAILED(device->CreateRootSignature(0, rs_blob->GetBufferPointer(), rs_blob->GetBufferSize(),
                                               IID_PPV_ARGS(&m_root_sig)))) {
-        spdlog::error("[PostPass] Root Signature fehlgeschlagen");
+        REVR_LOG(spdlog::error("[PostPass] Root Signature fehlgeschlagen"));
         return false;
     }
 
@@ -520,7 +547,7 @@ bool PostPass::setup(ID3D12Device* device) {
     pso_desc.CS.BytecodeLength = shader->GetBufferSize();
 
     if (FAILED(device->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&m_pso)))) {
-        spdlog::error("[PostPass] CreateComputePipelineState fehlgeschlagen");
+        REVR_LOG(spdlog::error("[PostPass] CreateComputePipelineState fehlgeschlagen"));
         m_root_sig.Reset();
         return false;
     }
@@ -531,7 +558,7 @@ bool PostPass::setup(ID3D12Device* device) {
     heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
     if (FAILED(device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&m_heap)))) {
-        spdlog::error("[PostPass] CreateDescriptorHeap fehlgeschlagen");
+        REVR_LOG(spdlog::error("[PostPass] CreateDescriptorHeap fehlgeschlagen"));
         m_pso.Reset();
         m_root_sig.Reset();
         return false;
@@ -540,7 +567,7 @@ bool PostPass::setup(ID3D12Device* device) {
     m_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     m_failed = false;
 
-    spdlog::info("[PostPass] bereit (Schaerfe + Saettigung, Compute, in place)");
+    REVR_LOG(spdlog::info("[PostPass] bereit (Schaerfe + Saettigung, Compute, in place)"));
 
     return true;
 }
@@ -607,7 +634,7 @@ int32_t PostPass::ensure_target(ID3D12Device* device, ID3D12Resource* src) {
     if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &tex,
                                                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
                                                IID_PPV_ARGS(&slot.target)))) {
-        spdlog::error("[PostPass] Zwischentextur konnte nicht angelegt werden");
+        REVR_LOG(spdlog::error("[PostPass] Zwischentextur konnte nicht angelegt werden"));
         return -1;
     }
 
@@ -623,13 +650,14 @@ int32_t PostPass::ensure_target(ID3D12Device* device, ID3D12Resource* src) {
 
 bool PostPass::dispatch_inplace(ID3D12Device* device, ID3D12GraphicsCommandList* cmd,
                                 ID3D12Resource* src, D3D12_RESOURCE_STATES src_state,
-                                float sharpness, float saturation, float brightness, float contrast) {
+                                float sharpness, float saturation, float brightness, float contrast,
+                                float edge_soften, float edge_threshold) {
     if (device == nullptr || cmd == nullptr || src == nullptr) {
         return false;
     }
 
     // Beides neutral -> gar nichts tun, das Bild bleibt bitgenau, wie es war.
-    if (sharpness <= 0.0f && saturation == 1.0f && brightness == 1.0f && contrast == 1.0f) {
+    if (sharpness <= 0.0f && edge_soften <= 0.0f && saturation == 1.0f && brightness == 1.0f && contrast == 1.0f) {
         return false;
     }
 
@@ -696,6 +724,11 @@ bool PostPass::dispatch_inplace(ID3D12Device* device, ID3D12GraphicsCommandList*
     const float co = std::clamp(contrast, 0.0f, 3.0f);
     cmd->SetComputeRoot32BitConstants(1, 1, &br, 5);
     cmd->SetComputeRoot32BitConstants(1, 1, &co, 6);
+
+    const float ed = std::clamp(edge_soften, 0.0f, 1.0f);
+    const float et = std::clamp(edge_threshold, 0.0f, 1.0f);
+    cmd->SetComputeRoot32BitConstants(1, 1, &ed, 7);
+    cmd->SetComputeRoot32BitConstants(1, 1, &et, 8);
 
     cmd->Dispatch((slot.width + 7) / 8, (slot.height + 7) / 8, 1);
 
@@ -818,10 +851,10 @@ float4 ps_blend(VSBlend i) : SV_Target {
 bool smaa_compile(const std::string& src, const char* entry, const char* profile, ComPtr<ID3DBlob>& out) {
     ComPtr<ID3DBlob> errors{};
 
-    if (FAILED(D3DCompile(src.data(), src.size(), "SMAA", nullptr, nullptr, entry, profile,
+    if (FAILED(compile_shader(src.data(), src.size(), "SMAA", nullptr, nullptr, entry, profile,
                           D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &out, &errors))) {
-        spdlog::error("[SmaaPass] {} liess sich nicht uebersetzen: {}", entry,
-                      errors != nullptr ? (const char*)errors->GetBufferPointer() : "?");
+        REVR_LOG(spdlog::error("[SmaaPass] {} liess sich nicht uebersetzen: {}", entry,
+                      errors != nullptr ? (const char*)errors->GetBufferPointer() : "?"));
         return false;
     }
 
@@ -954,13 +987,13 @@ bool SmaaPass::setup(ID3D12Device* device) {
     if (FAILED(D3D12SerializeRootSignature(&rs_desc, D3D_ROOT_SIGNATURE_VERSION_1, &rs_blob, &errors))
         || FAILED(device->CreateRootSignature(0, rs_blob->GetBufferPointer(), rs_blob->GetBufferSize(),
                                               IID_PPV_ARGS(&m_root_sig)))) {
-        spdlog::error("[SmaaPass] Root Signature fehlgeschlagen");
+        REVR_LOG(spdlog::error("[SmaaPass] Root Signature fehlgeschlagen"));
         return false;
     }
 
     if (!smaa_graphics_pso(device, m_root_sig.Get(), m_vs_edges.Get(), m_ps_edges.Get(), DXGI_FORMAT_R8G8_UNORM, m_pso_edges)
         || !smaa_graphics_pso(device, m_root_sig.Get(), m_vs_weights.Get(), m_ps_weights.Get(), DXGI_FORMAT_R8G8B8A8_UNORM, m_pso_weights)) {
-        spdlog::error("[SmaaPass] Grafik-PSO fehlgeschlagen");
+        REVR_LOG(spdlog::error("[SmaaPass] Grafik-PSO fehlgeschlagen"));
         return false;
     }
 
@@ -975,7 +1008,7 @@ bool SmaaPass::setup(ID3D12Device* device) {
 
     if (FAILED(device->CreateDescriptorHeap(&srv_desc, IID_PPV_ARGS(&m_srv_heap)))
         || FAILED(device->CreateDescriptorHeap(&rtv_desc, IID_PPV_ARGS(&m_rtv_heap)))) {
-        spdlog::error("[SmaaPass] Deskriptor-Heaps fehlgeschlagen");
+        REVR_LOG(spdlog::error("[SmaaPass] Deskriptor-Heaps fehlgeschlagen"));
         return false;
     }
 
@@ -988,12 +1021,12 @@ bool SmaaPass::setup(ID3D12Device* device) {
                             D3D12_RESOURCE_STATE_COPY_DEST, L"RE4VR SMAA SearchTex");
 
     if (m_area == nullptr || m_search == nullptr) {
-        spdlog::error("[SmaaPass] Lookup-Texturen fehlgeschlagen");
+        REVR_LOG(spdlog::error("[SmaaPass] Lookup-Texturen fehlgeschlagen"));
         return false;
     }
 
     m_failed = false;
-    spdlog::info("[SmaaPass] bereit (SMAA 1x ULTRA)");
+    REVR_LOG(spdlog::info("[SmaaPass] bereit (SMAA 1x ULTRA)"));
 
     return true;
 }
@@ -1006,7 +1039,7 @@ bool SmaaPass::ensure_pso_out(ID3D12Device* device, DXGI_FORMAT format) {
     m_pso_out.Reset();
 
     if (!smaa_graphics_pso(device, m_root_sig.Get(), m_vs_blend.Get(), m_ps_blend.Get(), format, m_pso_out)) {
-        spdlog::error("[SmaaPass] Ausgabe-PSO fuer Format {} fehlgeschlagen", (int)format);
+        REVR_LOG(spdlog::error("[SmaaPass] Ausgabe-PSO fuer Format {} fehlgeschlagen", (int)format));
         m_pso_out_format = DXGI_FORMAT_UNKNOWN;
         return false;
     }
@@ -1050,7 +1083,7 @@ bool SmaaPass::upload_luts(ID3D12Device* device, ID3D12GraphicsCommandList* cmd)
 
     if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buf, D3D12_RESOURCE_STATE_GENERIC_READ,
                                                nullptr, IID_PPV_ARGS(&m_upload)))) {
-        spdlog::error("[SmaaPass] Upload-Puffer fehlgeschlagen");
+        REVR_LOG(spdlog::error("[SmaaPass] Upload-Puffer fehlgeschlagen"));
         return false;
     }
 
@@ -1136,7 +1169,7 @@ int32_t SmaaPass::ensure_slot(ID3D12Device* device, ID3D12Resource* src) {
     slot.out = smaa_texture(device, w, h, desc.Format, rt, psr, L"RE4VR SMAA out");
 
     if (slot.edges == nullptr || slot.blend == nullptr || slot.out == nullptr) {
-        spdlog::error("[SmaaPass] Zwischentexturen fehlgeschlagen");
+        REVR_LOG(spdlog::error("[SmaaPass] Zwischentexturen fehlgeschlagen"));
         slot = Slot{};
         return -1;
     }
@@ -1350,10 +1383,10 @@ bool UiRestorePass::setup(ID3D12Device* device) {
     ComPtr<ID3DBlob> shader{};
     ComPtr<ID3DBlob> errors{};
 
-    if (FAILED(D3DCompile(UI_RESTORE_SHADER, sizeof(UI_RESTORE_SHADER) - 1, nullptr, nullptr, nullptr, "main",
+    if (FAILED(compile_shader(UI_RESTORE_SHADER, sizeof(UI_RESTORE_SHADER) - 1, nullptr, nullptr, nullptr, "main",
                           "cs_5_0", 0, 0, &shader, &errors))) {
-        spdlog::error("[UiRestorePass] Shader liess sich nicht uebersetzen: {}",
-                      errors != nullptr ? (const char*)errors->GetBufferPointer() : "?");
+        REVR_LOG(spdlog::error("[UiRestorePass] Shader liess sich nicht uebersetzen: {}",
+                      errors != nullptr ? (const char*)errors->GetBufferPointer() : "?"));
         return false;
     }
 
@@ -1395,7 +1428,7 @@ bool UiRestorePass::setup(ID3D12Device* device) {
     if (FAILED(D3D12SerializeRootSignature(&rs_desc, D3D_ROOT_SIGNATURE_VERSION_1, &rs_blob, &errors))
         || FAILED(device->CreateRootSignature(0, rs_blob->GetBufferPointer(), rs_blob->GetBufferSize(),
                                               IID_PPV_ARGS(&m_root_sig)))) {
-        spdlog::error("[UiRestorePass] Root Signature fehlgeschlagen");
+        REVR_LOG(spdlog::error("[UiRestorePass] Root Signature fehlgeschlagen"));
         return false;
     }
 
@@ -1405,7 +1438,7 @@ bool UiRestorePass::setup(ID3D12Device* device) {
     pso_desc.CS.BytecodeLength = shader->GetBufferSize();
 
     if (FAILED(device->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&m_pso)))) {
-        spdlog::error("[UiRestorePass] CreateComputePipelineState fehlgeschlagen");
+        REVR_LOG(spdlog::error("[UiRestorePass] CreateComputePipelineState fehlgeschlagen"));
         m_root_sig.Reset();
         return false;
     }
@@ -1416,7 +1449,7 @@ bool UiRestorePass::setup(ID3D12Device* device) {
     heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
     if (FAILED(device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&m_heap)))) {
-        spdlog::error("[UiRestorePass] CreateDescriptorHeap fehlgeschlagen");
+        REVR_LOG(spdlog::error("[UiRestorePass] CreateDescriptorHeap fehlgeschlagen"));
         m_pso.Reset();
         m_root_sig.Reset();
         return false;
@@ -1424,7 +1457,7 @@ bool UiRestorePass::setup(ID3D12Device* device) {
 
     m_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     m_failed = false;
-    spdlog::info("[UiRestorePass] bereit (UI-Trennung)");
+    REVR_LOG(spdlog::info("[UiRestorePass] bereit (UI-Trennung)"));
 
     return true;
 }
@@ -1609,3 +1642,348 @@ void UiRestorePass::reset() {
     m_failed = false;
 }
 }
+
+// ================================================================================================================
+// [LONG EDGES 11.11.2026] LongEdgePass, see SharpenPass.hpp
+// ================================================================================================================
+namespace d3d12 {
+namespace {
+constexpr char LONG_EDGE_SHADER[] = R"(
+Texture2D<float4>   g_src : register(t0);
+RWTexture2D<float4> g_dst : register(u0);
+SamplerState        g_lin : register(s0);
+
+cbuffer Params : register(b0) {
+    uint  g_w;
+    uint  g_h;
+    float g_strength;
+    float g_pad;
+};
+
+static const float3 LUMA = float3(0.299, 0.587, 0.114);
+#define EDGE_MIN 0.0312  // darks: no edge below this luma range
+#define EDGE_REL 0.125   // no edge below this share of the brightest luma around
+#define SUBPIX   0.25    // single-pixel features: kept mostly (sharpness)
+
+float luma_at(float2 uv) {
+    return dot(g_src.SampleLevel(g_lin, uv, 0).rgb, LUMA);
+}
+
+float luma_px(int2 p) {
+    return dot(g_src.Load(int3(clamp(p, int2(0, 0), int2(g_w, g_h) - 1), 0)).rgb, LUMA);
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= g_w || id.y >= g_h) {
+        return;
+    }
+
+    const int2 p = int2(id.xy);
+    const float4 c = g_src.Load(int3(p, 0));
+    const float2 rcp = 1.0 / float2(g_w, g_h);
+    const float2 uv = (float2(p) + 0.5) * rcp;
+
+    const float lM = dot(c.rgb, LUMA);
+    float lN = luma_px(p + int2(0, -1));
+    float lS = luma_px(p + int2(0, 1));
+    const float lW = luma_px(p + int2(-1, 0));
+    const float lE = luma_px(p + int2(1, 0));
+    const float lMax = max(lM, max(max(lN, lS), max(lW, lE)));
+    const float lMin = min(lM, min(min(lN, lS), min(lW, lE)));
+    const float range = lMax - lMin;
+
+    if (range < max(EDGE_MIN, lMax * EDGE_REL)) {
+        g_dst[id.xy] = c;
+        return;
+    }
+
+    const float lNW = luma_px(p + int2(-1, -1));
+    const float lNE = luma_px(p + int2(1, -1));
+    const float lSW = luma_px(p + int2(-1, 1));
+    const float lSE = luma_px(p + int2(1, 1));
+
+    const float lNS = lN + lS;
+    const float lWE = lW + lE;
+    const float lNWSW = lNW + lSW;
+    const float lNESE = lNE + lSE;
+    const float lNWNE = lNW + lNE;
+    const float lSWSE = lSW + lSE;
+
+    const float edge_h = abs(-2.0 * lW + lNWSW) + abs(-2.0 * lM + lNS) * 2.0 + abs(-2.0 * lE + lNESE);
+    const float edge_v = abs(-2.0 * lS + lSWSE) + abs(-2.0 * lM + lWE) * 2.0 + abs(-2.0 * lN + lNWNE);
+    const bool horz = edge_h >= edge_v; // the edge runs along x: searched along x, moved along y
+
+    const float subpix_a = (lNS + lWE) * 2.0 + lNWSW + lNESE;
+
+    if (!horz) {
+        lN = lW;
+        lS = lE;
+    }
+
+    float length_sign = horz ? rcp.y : rcp.x;
+    const float subpix_b = subpix_a * (1.0 / 12.0) - lM;
+    const float gradient_n = lN - lM;
+    const float gradient_s = lS - lM;
+    float luma_nn = lN + lM;
+    const float luma_ss = lS + lM;
+    const bool pair_n = abs(gradient_n) >= abs(gradient_s);
+    const float gradient = max(abs(gradient_n), abs(gradient_s));
+
+    if (pair_n) {
+        length_sign = -length_sign;
+    }
+
+    const float subpix_c = saturate(abs(subpix_b) / range);
+
+    float2 pos_b = uv;
+    const float2 off = horz ? float2(rcp.x, 0.0) : float2(0.0, rcp.y);
+
+    if (horz) {
+        pos_b.y += length_sign * 0.5;
+    } else {
+        pos_b.x += length_sign * 0.5;
+    }
+
+    if (!pair_n) {
+        luma_nn = luma_ss;
+    }
+
+    const float gradient_scaled = gradient * 0.25;
+    const float luma_mm = lM - luma_nn * 0.5;
+    const bool luma_m_lt_zero = luma_mm < 0.0;
+
+    // the run along the edge, both directions (the steps of FXAA's quality preset 39)
+    static const float STEPS[12] = {1.0, 1.0, 1.0, 1.0, 1.0, 1.5, 2.0, 2.0, 2.0, 2.0, 4.0, 8.0};
+    float2 pos_n = pos_b - off * STEPS[0];
+    float2 pos_p = pos_b + off * STEPS[0];
+    float end_n = luma_at(pos_n) - luma_nn * 0.5;
+    float end_p = luma_at(pos_p) - luma_nn * 0.5;
+    bool done_n = abs(end_n) >= gradient_scaled;
+    bool done_p = abs(end_p) >= gradient_scaled;
+
+    [loop] for (int i = 1; i < 12 && !(done_n && done_p); ++i) {
+        if (!done_n) {
+            pos_n -= off * STEPS[i];
+            end_n = luma_at(pos_n) - luma_nn * 0.5;
+            done_n = abs(end_n) >= gradient_scaled;
+        }
+
+        if (!done_p) {
+            pos_p += off * STEPS[i];
+            end_p = luma_at(pos_p) - luma_nn * 0.5;
+            done_p = abs(end_p) >= gradient_scaled;
+        }
+    }
+
+    const float dst_n = horz ? uv.x - pos_n.x : uv.y - pos_n.y;
+    const float dst_p = horz ? pos_p.x - uv.x : pos_p.y - uv.y;
+    const bool good_n = (end_n < 0.0) != luma_m_lt_zero;
+    const bool good_p = (end_p < 0.0) != luma_m_lt_zero;
+    const float span = max(dst_p + dst_n, 1e-6);
+    const bool direction_n = dst_n < dst_p;
+    const float dst = min(dst_n, dst_p);
+    const bool good = direction_n ? good_n : good_p;
+    const float pixel_offset = good ? 0.5 - dst / span : 0.0;
+
+    const float subpix_d = -2.0 * subpix_c + 3.0;
+    const float subpix_f = subpix_d * subpix_c * subpix_c;
+    const float subpix_h = subpix_f * subpix_f * SUBPIX;
+    const float offset = max(pixel_offset, subpix_h);
+
+    float2 pos_m = uv;
+
+    if (horz) {
+        pos_m.y += offset * length_sign;
+    } else {
+        pos_m.x += offset * length_sign;
+    }
+
+    const float4 aa = g_src.SampleLevel(g_lin, pos_m, 0);
+    g_dst[id.xy] = float4(lerp(c.rgb, aa.rgb, g_strength), c.a);
+}
+)";
+} // namespace
+
+bool LongEdgePass::setup(ID3D12Device* device) {
+    if (m_pso != nullptr) {
+        return true;
+    }
+
+    if (m_failed || device == nullptr) {
+        return false;
+    }
+
+    m_failed = true;
+
+    Microsoft::WRL::ComPtr<ID3DBlob> shader{};
+    Microsoft::WRL::ComPtr<ID3DBlob> errors{};
+
+    if (FAILED(compile_shader(LONG_EDGE_SHADER, sizeof(LONG_EDGE_SHADER) - 1, "LongEdge", nullptr, nullptr, "main", "cs_5_0", 0, 0, &shader, &errors))) {
+        REVR_LOG(spdlog::error("[LongEdgePass] shader compile failed: {}", errors != nullptr ? (const char*)errors->GetBufferPointer() : "?"));
+        m_last_error = "shader compile failed";
+        return false;
+    }
+
+    D3D12_DESCRIPTOR_RANGE ranges[2]{};
+    ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    ranges[0].NumDescriptors = 1;
+    ranges[0].OffsetInDescriptorsFromTableStart = 0;
+    ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    ranges[1].NumDescriptors = 1;
+    ranges[1].OffsetInDescriptorsFromTableStart = 1;
+
+    D3D12_ROOT_PARAMETER params[2]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[0].DescriptorTable.NumDescriptorRanges = 2;
+    params[0].DescriptorTable.pDescriptorRanges = ranges;
+    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    params[1].Constants.Num32BitValues = 4;
+    params[1].Constants.ShaderRegister = 0;
+    params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_STATIC_SAMPLER_DESC sampler{};
+    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.MaxLOD = D3D12_FLOAT32_MAX;
+    sampler.ShaderRegister = 0;
+    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_ROOT_SIGNATURE_DESC rs_desc{};
+    rs_desc.NumParameters = 2;
+    rs_desc.pParameters = params;
+    rs_desc.NumStaticSamplers = 1;
+    rs_desc.pStaticSamplers = &sampler;
+
+    Microsoft::WRL::ComPtr<ID3DBlob> rs_blob{};
+
+    if (FAILED(D3D12SerializeRootSignature(&rs_desc, D3D_ROOT_SIGNATURE_VERSION_1, &rs_blob, &errors)) ||
+        FAILED(device->CreateRootSignature(0, rs_blob->GetBufferPointer(), rs_blob->GetBufferSize(), IID_PPV_ARGS(&m_root_sig)))) {
+        m_last_error = "root signature failed";
+        return false;
+    }
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC pso_desc{};
+    pso_desc.pRootSignature = m_root_sig.Get();
+    pso_desc.CS.pShaderBytecode = shader->GetBufferPointer();
+    pso_desc.CS.BytecodeLength = shader->GetBufferSize();
+
+    if (FAILED(device->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&m_pso)))) {
+        m_root_sig.Reset();
+        m_last_error = "pipeline state failed";
+        return false;
+    }
+
+    D3D12_DESCRIPTOR_HEAP_DESC heap_desc{};
+    heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    heap_desc.NumDescriptors = RING_COUNT * 2;
+    heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+    if (FAILED(device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&m_heap)))) {
+        m_pso.Reset();
+        m_root_sig.Reset();
+        m_last_error = "descriptor heap failed";
+        return false;
+    }
+
+    m_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    m_failed = false;
+    m_last_error = "";
+    REVR_LOG(spdlog::info("[LongEdgePass] ready"));
+    return true;
+}
+
+bool LongEdgePass::dispatch(ID3D12Device* device, ID3D12GraphicsCommandList* cmd, ID3D12Resource* src, D3D12_RESOURCE_STATES src_state,
+    ID3D12Resource* dst, float strength) {
+    if (device == nullptr || cmd == nullptr || src == nullptr || dst == nullptr) {
+        m_last_error = "missing input";
+        return false;
+    }
+
+    if (!setup(device)) {
+        return false;
+    }
+
+    const auto sd = src->GetDesc();
+    const auto dd = dst->GetDesc();
+
+    if (sd.Width != dd.Width || sd.Height != dd.Height) {
+        m_last_error = "sizes differ";
+        return false;
+    }
+
+    const uint32_t ring = m_ring;
+    m_ring = (m_ring + 1) % RING_COUNT;
+
+    auto cpu = m_heap->GetCPUDescriptorHandleForHeapStart();
+    auto gpu = m_heap->GetGPUDescriptorHandleForHeapStart();
+    cpu.ptr += (SIZE_T)(ring * 2) * m_descriptor_size;
+    gpu.ptr += (UINT64)(ring * 2) * m_descriptor_size;
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.Texture2D.MipLevels = 1;
+    srv.Format = sd.Format;
+    device->CreateShaderResourceView(src, &srv, cpu);
+
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+    uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    uav.Format = dd.Format;
+    device->CreateUnorderedAccessView(dst, nullptr, &uav, D3D12_CPU_DESCRIPTOR_HANDLE{cpu.ptr + m_descriptor_size});
+
+    const auto read_state = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+
+    if (src_state != read_state) {
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource = src;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        b.Transition.StateBefore = src_state;
+        b.Transition.StateAfter = read_state;
+        cmd->ResourceBarrier(1, &b);
+    }
+
+    ID3D12DescriptorHeap* heaps[]{m_heap.Get()};
+    cmd->SetDescriptorHeaps(1, heaps);
+    cmd->SetComputeRootSignature(m_root_sig.Get());
+    cmd->SetPipelineState(m_pso.Get());
+    cmd->SetComputeRootDescriptorTable(0, gpu);
+
+    const float s = std::clamp(strength, 0.0f, 1.0f);
+    uint32_t constants[4]{(uint32_t)sd.Width, sd.Height, 0, 0};
+    std::memcpy(&constants[2], &s, sizeof(float));
+    cmd->SetComputeRoot32BitConstants(1, 4, constants, 0);
+    cmd->Dispatch(((uint32_t)sd.Width + 7) / 8, (sd.Height + 7) / 8, 1);
+
+    D3D12_RESOURCE_BARRIER done[2]{};
+    done[0].Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    done[0].UAV.pResource = dst;
+    uint32_t n = 1;
+
+    if (src_state != read_state) {
+        done[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        done[1].Transition.pResource = src;
+        done[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        done[1].Transition.StateBefore = read_state;
+        done[1].Transition.StateAfter = src_state;
+        n = 2;
+    }
+
+    cmd->ResourceBarrier(n, done);
+    m_last_error = "";
+    return true;
+}
+
+void LongEdgePass::reset() {
+    m_pso.Reset();
+    m_root_sig.Reset();
+    m_heap.Reset();
+    m_ring = 0;
+    m_failed = false;
+    m_last_error = "";
+}
+} // namespace d3d12

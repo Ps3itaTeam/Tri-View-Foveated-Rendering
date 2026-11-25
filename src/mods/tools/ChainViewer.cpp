@@ -1,3 +1,5 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] the developer tools: debug build only (Mods.cpp makes them only there)
 #include <optional>
 #include <tuple>
 
@@ -98,10 +100,10 @@ std::optional<std::string> ChainViewer::initialize_d3d_resources() {
         m_d3d12.sphere = DirectX::GeometricPrimitive::CreateSphere();
 
         m_d3d12.initialized = true;
-        spdlog::info("ChainViewer D3D12 initialized");
+        REVR_LOG(spdlog::info("ChainViewer D3D12 initialized"));
     } else {
         // TODO
-        spdlog::info("ChainViewer D3D11 initialized");
+        REVR_LOG(spdlog::info("ChainViewer D3D11 initialized"));
     }
 
     m_needs_d3d_init = false;
@@ -550,3 +552,4 @@ void ChainViewer::on_frame() {
     }
 }
 
+#endif // !REVR_RELEASE

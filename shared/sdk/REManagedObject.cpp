@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <spdlog/spdlog.h>
 
 #include "utility/Scan.hpp"
@@ -31,7 +32,7 @@ void resolve_add_ref() {
         "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC ? 48 89 CE 8B 41 08 85 C0", // MHWILDS+ (or unoptimized compiler builds?)
     };
 
-    spdlog::info("[REManagedObject] Finding add_ref function...");
+    REVR_LOG(spdlog::info("[REManagedObject] Finding add_ref function..."));
 
     for (auto pattern : possible_patterns) {
         auto address = utility::scan(utility::get_executable(), pattern.data());
@@ -42,7 +43,7 @@ void resolve_add_ref() {
         }
     }
 
-    spdlog::info("[REManagedObject] Found add_ref function at {:x}", (uintptr_t)add_ref_func);
+    REVR_LOG(spdlog::info("[REManagedObject] Found add_ref function at {:x}", (uintptr_t)add_ref_func));
 }
 
 void resolve_release() {
@@ -60,7 +61,7 @@ void resolve_release() {
         "41 57 41 56 41 55 41 54 56 57 55 53 48 83 EC ? 48 8B 05 ? ? ? ? 48 31 E0 48 89 44 24 30 8B 41 08", // MHWILDS+ (or unoptimized compiler builds?)
     };
 
-    spdlog::info("[REManagedObject] Finding release function...");
+    REVR_LOG(spdlog::info("[REManagedObject] Finding release function..."));
 
     for (auto pattern : possible_patterns) {
         auto address = utility::scan(utility::get_executable(), pattern.data());
@@ -69,7 +70,7 @@ void resolve_release() {
             release_func = (decltype(release_func))*address;
             break;
         } else if (address) {
-            spdlog::info("[REManagedObject] Found add_ref function while looking for release function, trying again...");
+            REVR_LOG(spdlog::info("[REManagedObject] Found add_ref function while looking for release function, trying again..."));
 
             const auto start = *address + 1;
             const auto module_size = *utility::get_module_size(utility::get_executable());
@@ -84,7 +85,7 @@ void resolve_release() {
         }
     }
 
-    spdlog::info("[REManagedObject] Found release function at {:x}", (uintptr_t)release_func);
+    REVR_LOG(spdlog::info("[REManagedObject] Found release function at {:x}", (uintptr_t)release_func));
 }
 }
 
@@ -124,7 +125,7 @@ void release(REManagedObject* object) {
 
 std::vector<::REManagedObject*> deserialize(const uint8_t* data, size_t size, bool add_references) {
     static void (*deserialize_func)(void* placeholder, const sdk::NativeArray<::REManagedObject*>&, const uint8_t*, size_t) = []() -> decltype(deserialize_func) {
-        spdlog::info("[REManagedObject] Finding deserialize function...");
+        REVR_LOG(spdlog::info("[REManagedObject] Finding deserialize function..."));
         decltype(deserialize_func) result{nullptr};
         uintptr_t first{};
 
@@ -143,22 +144,22 @@ std::vector<::REManagedObject*> deserialize(const uint8_t* data, size_t size, bo
         }
 
         if (first != 0) {
-            spdlog::info("[REManagedObject] Found first step at {:x}", first);
+            REVR_LOG(spdlog::info("[REManagedObject] Found first step at {:x}", first));
 
             auto second = utility::scan_reverse(first, 0x100, "48 8B C4");
 
             if (!second) {
-                spdlog::error("[REManagedObject] Failed to find second step");
+                REVR_LOG(spdlog::error("[REManagedObject] Failed to find second step"));
                 return nullptr;
             }
 
             result = (decltype(result))*second;
         } else {
-            spdlog::error("[REManagedObject] Failed to find first step");
+            REVR_LOG(spdlog::error("[REManagedObject] Failed to find first step"));
             return nullptr;
         }
 
-        spdlog::info("[REManagedObject] Found deserialize function at {:x}", (uintptr_t)result);
+        REVR_LOG(spdlog::info("[REManagedObject] Found deserialize function at {:x}", (uintptr_t)result));
 
         return result;
     }();

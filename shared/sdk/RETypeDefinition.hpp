@@ -360,6 +360,9 @@ struct RETypeDefinition : public sdk::RETypeDefinition_ {
     sdk::RETypeDefinition* get_generic_type_definition() const;
     sdk::REField* get_field(std::string_view name) const;
     sdk::REMethodDefinition* get_method(std::string_view name) const;
+    // [CPU 04.11.2026] the lookups without the per-thread front of get_field / get_method (NameCache.hpp)
+    sdk::REField* get_field_uncached(std::string_view name) const;
+    sdk::REMethodDefinition* get_method_uncached(std::string_view name) const;
     std::vector<sdk::REMethodDefinition*> get_methods(std::string_view name) const;
     std::vector<sdk::RETypeDefinition*> get_generic_argument_types() const;
     sdk::GenericListData* get_generic_data() const;

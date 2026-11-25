@@ -1,4 +1,5 @@
 #pragma once
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 
 #include <unordered_set>
 
@@ -83,14 +84,19 @@ public:
     XrResult end_frame();
 
     void begin_profile() {
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] the calls' timing is for the log only
         if (!this->profile_calls) {
             return;
         }
 
         this->profiler_start_time = std::chrono::high_resolution_clock::now();
+#endif
     }
 
     void end_profile(std::string_view name) {
+#if REVR_RELEASE // [RELEASE SWITCH fix141] the calls' timing is for the log only
+        (void)name;
+#else
         if (!this->profile_calls) {
             return;
         }
@@ -98,7 +104,8 @@ public:
         const auto end_time = std::chrono::high_resolution_clock::now();
         const auto dur = std::chrono::duration<float, std::milli>(end_time - this->profiler_start_time).count();
 
-        spdlog::info("{} took {} ms", name, dur);
+        REVR_LOG(spdlog::info("{} took {} ms", name, dur));
+#endif
     }
 
     bool is_action_active(XrAction action, VRRuntime::Hand hand) const;

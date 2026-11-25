@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <windows.h>
 #include <dbghelp.h>
 
@@ -100,7 +101,7 @@ namespace sdk {
             } 
         };
 
-        spdlog::info("[VM::update_pointers] Updating...");
+        REVR_LOG(spdlog::info("[VM::update_pointers] Updating..."));
 
         // Version 1
         //auto ref = utility::scan(g_framework->getModule().as<HMODULE>(), "48 8B 0D ? ? ? ? BA FF FF FF FF E8 ? ? ? ? 48 89 C3");
@@ -154,7 +155,7 @@ namespace sdk {
         }
 
         if (!ref || *ref == nullptr) {
-            spdlog::info("[VM::update_pointers] Unable to find ref.");
+            REVR_LOG(spdlog::info("[VM::update_pointers] Unable to find ref."));
             return;
         }
 
@@ -162,7 +163,7 @@ namespace sdk {
         bool found_tdb = false;
 
         if (*potential_context == nullptr) {
-            spdlog::info("[VM::update_pointers] Context is null.");
+            REVR_LOG(spdlog::info("[VM::update_pointers] Context is null."));
             return;
         }
 
@@ -183,24 +184,24 @@ namespace sdk {
                 s_type_db_offset = i;
                 s_static_tbl_offset = s_type_db_offset - 0x30; // hope this holds true for the older gameS!!!!!!!!!!!!!!!!!!!
                 found_tdb = true;
-                spdlog::info("[VM::update_pointers] s_type_db_offset: {:x}", s_type_db_offset);
-                spdlog::info("[VM::update_pointers] s_static_tbl_offset: {:x}", s_static_tbl_offset);
-                spdlog::info("[VM::update_pointers] TDB Version: {}", version);
-                spdlog::info("[VM::update_pointers] TDB: {:x}", (uintptr_t)ptr);
+                REVR_LOG(spdlog::info("[VM::update_pointers] s_type_db_offset: {:x}", s_type_db_offset));
+                REVR_LOG(spdlog::info("[VM::update_pointers] s_static_tbl_offset: {:x}", s_static_tbl_offset));
+                REVR_LOG(spdlog::info("[VM::update_pointers] TDB Version: {}", version));
+                REVR_LOG(spdlog::info("[VM::update_pointers] TDB: {:x}", (uintptr_t)ptr));
                 break;
             }
         }
 
         if (!found_tdb) {
-            spdlog::error("[VM::update_pointers] Unable to find TDB inside VM");
+            REVR_LOG(spdlog::error("[VM::update_pointers] Unable to find TDB inside VM"));
             return;
         }
 
         s_global_context = potential_context;
         s_get_thread_context = (decltype(s_get_thread_context))utility::calculate_absolute(*ref + context_pattern->get_thread_context_offset);
 
-        spdlog::info("[VM::update_pointers] s_global_context: {:x}", (uintptr_t)s_global_context);
-        spdlog::info("[VM::update_pointers] s_get_thread_context: {:x}", (uintptr_t)s_get_thread_context);
+        REVR_LOG(spdlog::info("[VM::update_pointers] s_global_context: {:x}", (uintptr_t)s_global_context));
+        REVR_LOG(spdlog::info("[VM::update_pointers] s_get_thread_context: {:x}", (uintptr_t)s_get_thread_context));
 
         // Needed on TDB73/AJ. The 0x30 offset we have is not correct, so we need to find the correct one
         // And the "correct" one is the first one that doesn't look like a BS pointer (crude, i know)
@@ -210,9 +211,9 @@ namespace sdk {
             auto static_tbl = (REStaticTbl**)((uintptr_t)*s_global_context + s_static_tbl_offset);
             bool found_static_tbl_offset = false;
             const auto before_static_tbl_size = *(uint32_t*)((uintptr_t)static_tbl + sizeof(void*));
-            spdlog::info("[VM::update_pointers] Static table size (before): {}", *(uint32_t*)((uintptr_t)static_tbl + sizeof(void*)));
+            REVR_LOG(spdlog::info("[VM::update_pointers] Static table size (before): {}", *(uint32_t*)((uintptr_t)static_tbl + sizeof(void*))));
             if (IsBadReadPtr(*static_tbl, sizeof(void*)) || ((uintptr_t)*static_tbl & (sizeof(void*) - 1)) != 0 || before_static_tbl_size > 9999999 || before_static_tbl_size < 2000) {
-                spdlog::info("[VM::update_pointers] Static table offset is bad, correcting...");
+                REVR_LOG(spdlog::info("[VM::update_pointers] Static table offset is bad, correcting..."));
 
                 // We are looking for the two arrays, the static field table, and the static field "initialized table"
                 // The initialized table tells whether a specific entry in the static field table has been initialized or not
@@ -224,7 +225,7 @@ namespace sdk {
                         continue;
                     }
 
-                    spdlog::info("[VM::update_pointers] Examining {:x}", (uintptr_t)ptr);
+                    REVR_LOG(spdlog::info("[VM::update_pointers] Examining {:x}", (uintptr_t)ptr));
 
                     const auto& potential_count = *(uint32_t*)((uintptr_t)&ptr + sizeof(void*));
 
@@ -238,7 +239,7 @@ namespace sdk {
                     const auto& previous_count = *(uint32_t*)((uintptr_t)&previous_ptr + sizeof(void*));
 
                     if (previous_count == potential_count) {
-                        spdlog::info("[VM::update_pointers] Found static table at {:x} (offset {:x})", (uintptr_t)ptr, previous_offset);
+                        REVR_LOG(spdlog::info("[VM::update_pointers] Found static table at {:x} (offset {:x})", (uintptr_t)ptr, previous_offset));
                         s_static_tbl_offset = previous_offset;
                         found_static_tbl_offset = true;
                         break;
@@ -253,7 +254,7 @@ namespace sdk {
             // Just make it return null if we can't find it
             // We do this so the consumer can do while(sdk::VM::get() != nullptr) { ... } to wait for everything to be valid
             if (!found_static_tbl_offset) {
-                spdlog::error("[VM::update_pointers] Unable to find static table offset.");
+                REVR_LOG(spdlog::error("[VM::update_pointers] Unable to find static table offset."));
                 s_global_context = nullptr;
                 s_get_thread_context = nullptr;
                 return;
@@ -296,7 +297,7 @@ namespace sdk {
             auto tdb_references = utility::scan_displacement_references(mod, (uintptr_t)tdb);
 
             if (tdb_references.empty()) {
-                spdlog::info("[VM::update_pointers] Unable to find TDB references.");
+                REVR_LOG(spdlog::info("[VM::update_pointers] Unable to find TDB references."));
                 return false;
             }
 
@@ -307,7 +308,7 @@ namespace sdk {
                     continue;
                 }
 
-                spdlog::info("[VM::update_pointers] Disassembling function at {:x}", *fn_start);
+                REVR_LOG(spdlog::info("[VM::update_pointers] Disassembling function at {:x}", *fn_start));
 
                 bool found = false;
 
@@ -362,7 +363,7 @@ namespace sdk {
                         s_invoke_tbl = (sdk::InvokeMethod*)functions;
                         found = true;
 
-                        spdlog::info("[VM::update_pointers] s_invoke_tbl: {:x}", (uintptr_t)s_invoke_tbl);
+                        REVR_LOG(spdlog::info("[VM::update_pointers] s_invoke_tbl: {:x}", (uintptr_t)s_invoke_tbl));
 
                         return utility::ExhaustionResult::BREAK;
                     } catch (...) {
@@ -392,14 +393,14 @@ namespace sdk {
         }
 
         if (!method_inside_invoke_tbl) {
-            spdlog::info("[VM::update_pointers] Unable to find method inside invoke table. Trying fallback scan...");
+            REVR_LOG(spdlog::info("[VM::update_pointers] Unable to find method inside invoke table. Trying fallback scan..."));
             const auto anchor = utility::scan(mod, "8D 56 FF 48 8B CF E8 ? ? ? ?");
 
             if (!anchor) {
-                spdlog::info("[VM::update_pointers] Unable to find anchor for invoke table, trying alternative scan...");
+                REVR_LOG(spdlog::info("[VM::update_pointers] Unable to find anchor for invoke table, trying alternative scan..."));
 
                 if (!alternative_invoke_scan()) {
-                    spdlog::info("[VM::update_pointers] Unable to find invoke table.");
+                    REVR_LOG(spdlog::info("[VM::update_pointers] Unable to find invoke table."));
                     return;
                 }
 
@@ -409,10 +410,10 @@ namespace sdk {
             const auto lea_rdx = utility::scan_reverse(*anchor, 0x100, "48 8D 15 ? ? ? ?");
 
             if (!lea_rdx) {
-                spdlog::info("[VM::update_pointers] Unable to find lea rdx for invoke table.");
+                REVR_LOG(spdlog::info("[VM::update_pointers] Unable to find lea rdx for invoke table."));
 
                 if (!alternative_invoke_scan()) {
-                    spdlog::info("[VM::update_pointers] Unable to find invoke table.");
+                    REVR_LOG(spdlog::info("[VM::update_pointers] Unable to find invoke table."));
                     return;
                 }
 
@@ -421,27 +422,27 @@ namespace sdk {
 
             s_invoke_tbl = (sdk::InvokeMethod*)utility::resolve_displacement(*lea_rdx).value_or(0);
 
-            spdlog::info("[VM::update_pointers] s_invoke_tbl: {:x}", (uintptr_t)s_invoke_tbl);
+            REVR_LOG(spdlog::info("[VM::update_pointers] s_invoke_tbl: {:x}", (uintptr_t)s_invoke_tbl));
 
             return;
         }
 
-        spdlog::info("[VM::update_pointers] method_inside_invoke_tbl: {:x}", (uintptr_t)*method_inside_invoke_tbl);
+        REVR_LOG(spdlog::info("[VM::update_pointers] method_inside_invoke_tbl: {:x}", (uintptr_t)*method_inside_invoke_tbl));
 
         auto ptr_inside_invoke_tbl = utility::scan_ptr(mod, *method_inside_invoke_tbl);
 
         if (!ptr_inside_invoke_tbl) {
-            spdlog::info("[VM::update_pointers] Unable to find ptr inside invoke table.");
+            REVR_LOG(spdlog::info("[VM::update_pointers] Unable to find ptr inside invoke table."));
 
             if (!alternative_invoke_scan()) {
-                spdlog::info("[VM::update_pointers] Unable to find invoke table.");
+                REVR_LOG(spdlog::info("[VM::update_pointers] Unable to find invoke table."));
                 return;
             }
 
             return;
         }
 
-        spdlog::info("[VM::update_pointers] ptr_inside_invoke_tbl: {:x}", (uintptr_t)*ptr_inside_invoke_tbl);
+        REVR_LOG(spdlog::info("[VM::update_pointers] ptr_inside_invoke_tbl: {:x}", (uintptr_t)*ptr_inside_invoke_tbl));
 
         // Scan backwards for a null pointer
         for (auto i = *ptr_inside_invoke_tbl; ; i -= sizeof(void*)) {
@@ -451,7 +452,7 @@ namespace sdk {
             }
         }
 
-        spdlog::info("[VM::update_pointers] s_invoke_tbl: {:x}", (uintptr_t)s_invoke_tbl);
+        REVR_LOG(spdlog::info("[VM::update_pointers] s_invoke_tbl: {:x}", (uintptr_t)s_invoke_tbl));
 #endif
     }
 
@@ -491,7 +492,7 @@ namespace sdk {
             s_fully_updated_vm_context_pointers = true;
         }};
 
-        spdlog::info("[VMContext] Locating funcs");
+        REVR_LOG(spdlog::info("[VMContext] Locating funcs"));
         
         // Version 1
         //auto ref = utility::scan(g_framework->getModule().as<HMODULE>(), "48 83 78 18 00 74 ? 48 89 D9 E8 ? ? ? ? 48 89 D9 E8 ? ? ? ?");
@@ -500,7 +501,7 @@ namespace sdk {
         auto ref = utility::scan(utility::get_executable(), "48 83 78 18 00 74 ? 48 ? ? E8 ? ? ? ? 48 ? ? E8 ? ? ? ? 48 ? ? E8 ? ? ? ?");
 
         if (!ref) {
-            spdlog::info("[VMContext] Could not locate functions we need, trying fallback for full cleanup...");
+            REVR_LOG(spdlog::info("[VMContext] Could not locate functions we need, trying fallback for full cleanup..."));
 
             auto full_cleanup_ref = utility::scan(utility::get_executable(), "48 8B 41 50 48 83 78 18 00");
 
@@ -508,12 +509,12 @@ namespace sdk {
                 auto fn = utility::find_function_start_with_call(*full_cleanup_ref);
 
                 if (!fn) {
-                    spdlog::error("[VMContext] Could not locate full cleanup function.");
+                    REVR_LOG(spdlog::error("[VMContext] Could not locate full cleanup function."));
                     return;
                 }
 
                 s_context_full_cleanup_fn = (decltype(s_context_full_cleanup_fn))*fn;
-                spdlog::info("Context::FullCleanup {:x}", (uintptr_t)s_context_full_cleanup_fn);
+                REVR_LOG(spdlog::info("Context::FullCleanup {:x}", (uintptr_t)s_context_full_cleanup_fn));
 
                 // We need LocalFrameGC at least now, the other functions are not important if we have the full cleanup function.
                 // Because we actually do call LocalFrameGC by itself when needed.
@@ -521,7 +522,7 @@ namespace sdk {
                 auto basic_blocks = utility::collect_basic_blocks(*fn);
 
                 if (basic_blocks.empty()) {
-                    spdlog::error("[VMContext] Could not locate LocalFrameGC function (basic blocks).");
+                    REVR_LOG(spdlog::error("[VMContext] Could not locate LocalFrameGC function (basic blocks)."));
                     return;
                 }
 
@@ -543,7 +544,7 @@ namespace sdk {
                             // However it's such a common set of instructions which is why we narrow it to this function.
                             if (utility::scan_disasm(dst, 20, "48 8B 41 50")) {
                                 s_context_local_frame_gc_fn = (decltype(s_context_local_frame_gc_fn))dst;
-                                spdlog::info("[VMContext] Context::LocalFrameGC {:x}", (uintptr_t)s_context_local_frame_gc_fn);
+                                REVR_LOG(spdlog::info("[VMContext] Context::LocalFrameGC {:x}", (uintptr_t)s_context_local_frame_gc_fn));
                                 break;
                             }
                         }
@@ -551,14 +552,14 @@ namespace sdk {
                 }
 
                 if (s_context_local_frame_gc_fn == nullptr) {
-                    spdlog::error("[VMContext] Could not locate LocalFrameGC function.");
+                    REVR_LOG(spdlog::error("[VMContext] Could not locate LocalFrameGC function."));
                     return;
                 }
 
                 return;
             }
 
-            spdlog::error("[VMContext] We're going to crash, could not locate functions we need.");
+            REVR_LOG(spdlog::error("[VMContext] We're going to crash, could not locate functions we need."));
             return;
         }
 
@@ -566,9 +567,9 @@ namespace sdk {
         s_context_local_frame_gc_fn = Address{ utility::calculate_absolute(*ref + 19) }.as<decltype(s_context_local_frame_gc_fn)>();
         s_context_end_global_frame_fn = Address{ utility::calculate_absolute(*ref + 27) }.as<decltype(s_context_end_global_frame_fn)>();
 
-        spdlog::info("Context::UnhandledException {:x}", (uintptr_t)s_context_unhandled_exception_fn);
-        spdlog::info("Context::LocalFrameGC {:x}", (uintptr_t)s_context_local_frame_gc_fn);
-        spdlog::info("Context::EndGlobalFrame {:x}", (uintptr_t)s_context_end_global_frame_fn);
+        REVR_LOG(spdlog::info("Context::UnhandledException {:x}", (uintptr_t)s_context_unhandled_exception_fn));
+        REVR_LOG(spdlog::info("Context::LocalFrameGC {:x}", (uintptr_t)s_context_local_frame_gc_fn));
+        REVR_LOG(spdlog::info("Context::EndGlobalFrame {:x}", (uintptr_t)s_context_end_global_frame_fn));
     }
 
     void* sdk::VMContext::unhandled_exception() {
@@ -593,7 +594,7 @@ namespace sdk {
         auto& reference_count = this->referenceCount;
         auto count_delta = reference_count - old_reference_count;
 
-        spdlog::error("{}", reference_count);
+        REVR_LOG(spdlog::error("{}", reference_count));
         if (count_delta >= 1) {
             if (s_context_full_cleanup_fn != nullptr) {
                 s_context_full_cleanup_fn(this);
@@ -610,7 +611,7 @@ namespace sdk {
             this->local_frame_gc();
             this->end_global_frame();
         } else if (count_delta == 0) {
-            spdlog::info("No fix necessary");
+            REVR_LOG(spdlog::info("No fix necessary"));
         }
     }
 
@@ -624,8 +625,9 @@ namespace sdk {
             func();
 
             if (context->unkPtr->unkPtr != nullptr) {
-                spdlog::error("Internal game exception thrown in function call for {}", function_name.data());
+                REVR_LOG(spdlog::error("Internal game exception thrown in function call for {}", function_name.data()));
 
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] for the log only
                 const auto exception_managed_object = (::REManagedObject*)context->unkPtr->unkPtr;
 
                 if (utility::re_managed_object::is_managed_object(exception_managed_object)) {
@@ -633,19 +635,20 @@ namespace sdk {
 
                     if (exception_tdb_type != nullptr) {
                         const auto exception_name = exception_tdb_type->get_full_name();
-                        spdlog::error(" Exception name: {}", exception_name.data());
+                        REVR_LOG(spdlog::error(" Exception name: {}", exception_name.data()));
                     }
                 }
+#endif
 
                 if (corrupted_before_call) {
-                    spdlog::error("VMContext was already corrupted before this call, a previous exception may not have been handled properly");
+                    REVR_LOG(spdlog::error("VMContext was already corrupted before this call, a previous exception may not have been handled properly"));
                 }
 
                 context->unkPtr->unkPtr = nullptr;
                 throw std::runtime_error("Internal game exception thrown in function call for " + std::string(function_name.data()));
             }
         } catch(sdk::VMContext::Exception&) {
-            spdlog::error("Exception thrown in call to {}", function_name.data());
+            REVR_LOG(spdlog::error("Exception thrown in call to {}", function_name.data()));
             context->cleanup_after_exception(scoped_translator.get_prev_reference_count());
 
             throw std::runtime_error("Exception thrown in call to " + std::string(function_name.data()));
@@ -653,36 +656,36 @@ namespace sdk {
     }
 
     void sdk::VMContext::ScopedTranslator::translator(unsigned int code, struct ::_EXCEPTION_POINTERS* exc) {
-        spdlog::info("VMContext: Caught exception code {:x}", code);
+        REVR_LOG(spdlog::info("VMContext: Caught exception code {:x}", code));
 
         switch (code) {
         case EXCEPTION_ACCESS_VIOLATION: {
-            spdlog::info("VMContext: Attempting to handle access violation. Attempting to dump callstack...");
+            REVR_LOG(spdlog::info("VMContext: Attempting to handle access violation. Attempting to dump callstack..."));
 
-            spdlog::error("RIP: {:x}", exc->ContextRecord->Rip);
-            spdlog::error("RSP: {:x}", exc->ContextRecord->Rsp);
-            spdlog::error("RCX: {:x}", exc->ContextRecord->Rcx);
-            spdlog::error("RDX: {:x}", exc->ContextRecord->Rdx);
-            spdlog::error("R8: {:x}", exc->ContextRecord->R8);
-            spdlog::error("R9: {:x}", exc->ContextRecord->R9);
-            spdlog::error("R10: {:x}", exc->ContextRecord->R10);
-            spdlog::error("R11: {:x}", exc->ContextRecord->R11);
-            spdlog::error("R12: {:x}", exc->ContextRecord->R12);
-            spdlog::error("R13: {:x}", exc->ContextRecord->R13);
-            spdlog::error("R14: {:x}", exc->ContextRecord->R14);
-            spdlog::error("R15: {:x}", exc->ContextRecord->R15);
-            spdlog::error("RAX: {:x}", exc->ContextRecord->Rax);
-            spdlog::error("RBX: {:x}", exc->ContextRecord->Rbx);
-            spdlog::error("RBP: {:x}", exc->ContextRecord->Rbp);
-            spdlog::error("RSI: {:x}", exc->ContextRecord->Rsi);
-            spdlog::error("RDI: {:x}", exc->ContextRecord->Rdi);
-            spdlog::error("EFLAGS: {:x}", exc->ContextRecord->EFlags);
-            spdlog::error("CS: {:x}", exc->ContextRecord->SegCs);
-            spdlog::error("DS: {:x}", exc->ContextRecord->SegDs);
-            spdlog::error("ES: {:x}", exc->ContextRecord->SegEs);
-            spdlog::error("FS: {:x}", exc->ContextRecord->SegFs);
-            spdlog::error("GS: {:x}", exc->ContextRecord->SegGs);
-            spdlog::error("SS: {:x}", exc->ContextRecord->SegSs);
+            REVR_LOG(spdlog::error("RIP: {:x}", exc->ContextRecord->Rip));
+            REVR_LOG(spdlog::error("RSP: {:x}", exc->ContextRecord->Rsp));
+            REVR_LOG(spdlog::error("RCX: {:x}", exc->ContextRecord->Rcx));
+            REVR_LOG(spdlog::error("RDX: {:x}", exc->ContextRecord->Rdx));
+            REVR_LOG(spdlog::error("R8: {:x}", exc->ContextRecord->R8));
+            REVR_LOG(spdlog::error("R9: {:x}", exc->ContextRecord->R9));
+            REVR_LOG(spdlog::error("R10: {:x}", exc->ContextRecord->R10));
+            REVR_LOG(spdlog::error("R11: {:x}", exc->ContextRecord->R11));
+            REVR_LOG(spdlog::error("R12: {:x}", exc->ContextRecord->R12));
+            REVR_LOG(spdlog::error("R13: {:x}", exc->ContextRecord->R13));
+            REVR_LOG(spdlog::error("R14: {:x}", exc->ContextRecord->R14));
+            REVR_LOG(spdlog::error("R15: {:x}", exc->ContextRecord->R15));
+            REVR_LOG(spdlog::error("RAX: {:x}", exc->ContextRecord->Rax));
+            REVR_LOG(spdlog::error("RBX: {:x}", exc->ContextRecord->Rbx));
+            REVR_LOG(spdlog::error("RBP: {:x}", exc->ContextRecord->Rbp));
+            REVR_LOG(spdlog::error("RSI: {:x}", exc->ContextRecord->Rsi));
+            REVR_LOG(spdlog::error("RDI: {:x}", exc->ContextRecord->Rdi));
+            REVR_LOG(spdlog::error("EFLAGS: {:x}", exc->ContextRecord->EFlags));
+            REVR_LOG(spdlog::error("CS: {:x}", exc->ContextRecord->SegCs));
+            REVR_LOG(spdlog::error("DS: {:x}", exc->ContextRecord->SegDs));
+            REVR_LOG(spdlog::error("ES: {:x}", exc->ContextRecord->SegEs));
+            REVR_LOG(spdlog::error("FS: {:x}", exc->ContextRecord->SegFs));
+            REVR_LOG(spdlog::error("GS: {:x}", exc->ContextRecord->SegGs));
+            REVR_LOG(spdlog::error("SS: {:x}", exc->ContextRecord->SegSs));
 
             utility::exceptions::dump_callstack(exc);
 
@@ -781,14 +784,14 @@ namespace sdk {
 
             using vm_create_managed_array_no_rank = sdk::SystemArray* (*)(sdk::VMContext*, sdk::RETypeDefinition*, uint64_t length, bool global);
             static auto alternative = []() -> vm_create_managed_array_no_rank {
-                spdlog::info("[VM::create_managed_array] Searching for alternative method...");
+                REVR_LOG(spdlog::info("[VM::create_managed_array] Searching for alternative method..."));
 
                 const auto game = utility::get_executable();
                 const auto system_guid = sdk::find_type_definition("System.Guid");
                 const auto system_guid_to_byte_array = system_guid->get_method("ToByteArray");
 
                 if (system_guid_to_byte_array == nullptr || system_guid_to_byte_array->get_function() == nullptr) {
-                    spdlog::error("[VM::create_managed_array] Unable to find System.Guid.ToByteArray.");
+                    REVR_LOG(spdlog::error("[VM::create_managed_array] Unable to find System.Guid.ToByteArray."));
                     return nullptr;
                 }
 
@@ -796,13 +799,13 @@ namespace sdk {
                 const auto pat = utility::find_pattern_in_path((uint8_t*)system_guid_to_byte_array->get_function(), 100, true, "E8 ? ? ? ?");
 
                 if (!pat) {
-                    spdlog::error("[VM::create_managed_array] Unable to find pattern.");
+                    REVR_LOG(spdlog::error("[VM::create_managed_array] Unable to find pattern."));
                     return nullptr;
                 }
 
                 const auto start = utility::calculate_absolute(pat->addr + 1);
 
-                spdlog::info("[VM::create_managed_array] Found vm_create_managed_array at {:x}", start);
+                REVR_LOG(spdlog::info("[VM::create_managed_array] Found vm_create_managed_array at {:x}", start));
 
                 return (vm_create_managed_array_no_rank)start;
             }();
@@ -856,13 +859,13 @@ namespace sdk {
             new_delegate = combine_method->call<sdk::Delegate*>(ctx, new_delegate, &fake_delegate_non_empty);
 
             if (new_delegate == nullptr) {
-                spdlog::error("[VM::create_delegate] Unable to create delegate.");
+                REVR_LOG(spdlog::error("[VM::create_delegate] Unable to create delegate."));
                 return nullptr;
             }
         }
 
         if (new_delegate == nullptr || new_delegate == &fake_delegate_empty) {
-            spdlog::error("[VM::create_delegate] Unable to create delegate.");
+            REVR_LOG(spdlog::error("[VM::create_delegate] Unable to create delegate."));
             return nullptr;
         }
 

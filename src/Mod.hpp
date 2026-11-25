@@ -17,6 +17,130 @@
 
 #include "REFramework.hpp"
 
+// ============================================================================================================
+// [MENU TEXT 11.11.2026] Menu text that stays on the menu panel.
+//  - hint_text: explanations, wrapped at the window's width and a little smaller than the options.
+//  - hint_tooltip: tooltips wrapped (at most 36 em, at most half the display) and a little smaller.
+//  - Checkbox / SliderFloat / SliderInt / Combo / ...: the widget as ImGui draws it while its label fits to the
+//    right of it; a label too long for the space left goes on its own (wrapped) line above the widget, which then
+//    takes the whole width (sliders, combos, inputs), or wraps next to the box (checkboxes). Same arguments as ImGui.
+// ============================================================================================================
+#include <imgui_internal.h>
+#include <algorithm>
+#include <cfloat>
+#include <cstdarg>
+#include <string>
+#include <utility>
+
+namespace menu_text {
+inline const char* label_text(const char* s) { return s; }
+inline const char* label_text(const std::string& s) { return s.c_str(); }
+
+inline void hint_text(const char* fmt, ...) {
+    auto* const window = ImGui::GetCurrentWindow();
+    const float scale = window != nullptr ? window->FontWindowScale : 1.0f;
+    ImGui::SetWindowFontScale(scale * 0.85f);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    va_list args;
+    va_start(args, fmt);
+    ImGui::TextV(fmt, args);
+    va_end(args);
+    ImGui::PopStyleColor();
+    ImGui::PopTextWrapPos();
+    ImGui::SetWindowFontScale(scale);
+}
+
+inline void hint_tooltip(const char* fmt, ...) {
+    if (!ImGui::BeginTooltip()) {
+        return;
+    }
+
+    auto* const window = ImGui::GetCurrentWindow();
+    const float scale = window != nullptr ? window->FontWindowScale : 1.0f;
+    ImGui::SetWindowFontScale(scale * 0.85f);
+    const float wrap = (std::min)(ImGui::GetFontSize() * 36.0f, ImGui::GetIO().DisplaySize.x * 0.5f);
+    ImGui::PushTextWrapPos(wrap);
+    va_list args;
+    va_start(args, fmt);
+    ImGui::TextV(fmt, args);
+    va_end(args);
+    ImGui::PopTextWrapPos();
+    ImGui::SetWindowFontScale(scale);
+    ImGui::EndTooltip();
+}
+
+// a widget with its label on the right (sliders, combos, inputs, colour edits)
+template <class Draw>
+inline bool fit_widget(const char* label, Draw&& draw) {
+    const char* const end = ImGui::FindRenderedTextEnd(label);
+
+    if (end == label) {
+        return draw(label);
+    }
+
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float text_w = ImGui::CalcTextSize(label, end).x;
+
+    if (ImGui::CalcItemWidth() + ImGui::GetStyle().ItemInnerSpacing.x + text_w <= avail + 0.5f) {
+        return draw(label);
+    }
+
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(label, end);
+    ImGui::PopTextWrapPos();
+
+    const std::string hidden = std::string{"##"} + label;
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    return draw(hidden.c_str());
+}
+
+template <class L>
+inline bool Checkbox(const L& label_in, bool* v) {
+    const char* const label = label_text(label_in);
+    const char* const end = ImGui::FindRenderedTextEnd(label);
+    const auto& style = ImGui::GetStyle();
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float box = ImGui::GetFrameHeight();
+
+    if (end == label || box + style.ItemInnerSpacing.x + ImGui::CalcTextSize(label, end).x <= avail + 0.5f) {
+        return ImGui::Checkbox(label, v);
+    }
+
+    const std::string hidden = std::string{"##"} + label;
+    const bool pressed = ImGui::Checkbox(hidden.c_str(), v);
+
+    // the label wrapped next to the box, without becoming an item (the checkbox stays the last item for
+    // IsItemHovered and friends)
+    ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    const float wrap = (std::max)(ImGui::GetContentRegionAvail().x, box);
+    const ImVec2 size = ImGui::CalcTextSize(label, end, false, wrap);
+    pos.y += style.FramePadding.y;
+    ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), pos, ImGui::GetColorU32(ImGuiCol_Text), label, end, wrap);
+    ImGui::ItemSize(ImVec2(size.x, size.y + style.FramePadding.y * 2.0f), style.FramePadding.y);
+    return pressed;
+}
+
+#define MENU_TEXT_FIT(NAME)                                                                                     \
+    template <class L, class... A>                                                                              \
+    inline bool NAME(const L& label, A&&... a) {                                                                \
+        return fit_widget(label_text(label), [&](const char* l) { return ImGui::NAME(l, std::forward<A>(a)...); }); \
+    }
+
+MENU_TEXT_FIT(SliderFloat)
+MENU_TEXT_FIT(SliderInt)
+MENU_TEXT_FIT(SliderAngle)
+MENU_TEXT_FIT(Combo)
+MENU_TEXT_FIT(InputInt)
+MENU_TEXT_FIT(InputFloat)
+MENU_TEXT_FIT(DragFloat)
+MENU_TEXT_FIT(DragInt)
+MENU_TEXT_FIT(ColorEdit3)
+MENU_TEXT_FIT(ColorEdit4)
+#undef MENU_TEXT_FIT
+} // namespace menu_text
+
 // ============================================================================
 // [PERSISTENZ 2026-09-09] Menue-Einstellungen ueberlebten das Spiel nicht.
 // ============================================================================
@@ -124,7 +248,7 @@ public:
 
     bool draw(std::string_view name) override {
         ImGui::PushID(this);
-        auto ret = ImGui::Checkbox(name.data(), &m_value);
+        auto ret = menu_text::Checkbox(name.data(), &m_value);
 
         if (ret) {
             modvalue_request_save();
@@ -157,7 +281,7 @@ public:
 
     bool draw(std::string_view name) override {
         ImGui::PushID(this);
-        auto ret = ImGui::InputFloat(name.data(), &m_value);
+        auto ret = menu_text::InputFloat(name.data(), &m_value);
 
         if (ret) {
             modvalue_request_save();
@@ -189,7 +313,7 @@ public:
 
     bool draw(std::string_view name) override {
         ImGui::PushID(this);
-        auto ret = ImGui::SliderFloat(name.data(), &m_value, m_range.x, m_range.y);
+        auto ret = menu_text::SliderFloat(name.data(), &m_value, m_range.x, m_range.y);
 
         // Waehrend des Ziehens meldet SliderFloat JEDEN Frame eine Aenderung --
         // hier zaehlt deshalb nur das Loslassen.
@@ -229,7 +353,7 @@ public:
 
     bool draw(std::string_view name) override {
         ImGui::PushID(this);
-        auto ret = ImGui::InputInt(name.data(), &m_value);
+        auto ret = menu_text::InputInt(name.data(), &m_value);
 
         if (ret) {
             modvalue_request_save();
@@ -267,7 +391,7 @@ public:
         m_value = std::clamp<int32_t>(m_value, 0, static_cast<int32_t>(m_options.size()) - 1);
 
         ImGui::PushID(this);
-        auto ret = ImGui::Combo(name.data(), &m_value, m_options.data(), static_cast<int32_t>(m_options.size()));
+        auto ret = menu_text::Combo(name.data(), &m_value, m_options.data(), static_cast<int32_t>(m_options.size()));
 
         if (ret) {
             modvalue_request_save();
@@ -469,6 +593,10 @@ public:
     virtual void on_config_save(utility::Config& cfg) {};
 
     // Game-specific callbacks
+    // [CPU 03.11.2026] the engine updates thousands of transforms per frame with many characters on screen: Hooks only calls
+    // the two transform callbacks on the mods that return true here (the others have nothing in them). A mod that fills
+    // in either callback must return true.
+    virtual bool wants_transform_hooks() const { return false; }
     virtual void on_pre_update_transform(RETransform* transform) {};
     virtual void on_update_transform(RETransform* transform) {};
     virtual void on_pre_update_camera_controller(RopewayPlayerCameraController* controller) {};
@@ -483,6 +611,9 @@ public:
     virtual void on_lightshaft_draw(void* shaft, void* render_context) {};
     virtual void on_pre_view_get_size(REManagedObject* scene_view, float* result) {};
     virtual void on_view_get_size(REManagedObject* scene_view, float* result) {};   
+    // [CPU 28.10.2026] the four camera matrix callbacks below run several hundred times per frame: Hooks only calls them
+    // on the mods that return true here (the others have nothing in them)
+    virtual bool wants_camera_matrix_hooks() const { return false; }
     virtual void on_pre_camera_get_projection_matrix(REManagedObject* camera, Matrix4x4f* result) {};
     virtual void on_camera_get_projection_matrix(REManagedObject* camera, Matrix4x4f* result) {};
     virtual void on_pre_camera_get_view_matrix(REManagedObject* camera, Matrix4x4f* result) {};
@@ -499,3 +630,29 @@ public:
     MAKE_LAYER_CALLBACK(PrepareOutput, prepare_output);
     MAKE_LAYER_CALLBACK(Output, output);
 };
+
+// ============================================================================================================
+// [MENU TEXT fix159 25.11.2026] Talemann's RE4VR mods (src/mods/vr/games/RE4VR*.cpp) stay as he wrote them, and their menu
+// widgets still get the labels that fit the menu panel (menu_text above: with the release's twice-as-large font
+// (fix134) their long labels ran off the panel). The build sets REVR_TALEMANN_MENU_TEXT for those files only
+// (CMakeLists.txt / cmake.toml, RE4): from here on in them ImGui::Checkbox / SliderFloat / SliderInt / DragFloat /
+// ColorEdit3 are menu_text's, and ImGui::SetTooltip is menu_text::hint_tooltip -- what fix134 had written into each call.
+// At the end of this header, so that nothing above (menu_text itself, the option classes) is touched.
+// ============================================================================================================
+#if defined(REVR_TALEMANN_MENU_TEXT)
+namespace ImGui {
+template <class... A> inline bool revr_fit_Checkbox(A&&... a) { return menu_text::Checkbox(std::forward<A>(a)...); }
+template <class... A> inline bool revr_fit_SliderFloat(A&&... a) { return menu_text::SliderFloat(std::forward<A>(a)...); }
+template <class... A> inline bool revr_fit_SliderInt(A&&... a) { return menu_text::SliderInt(std::forward<A>(a)...); }
+template <class... A> inline bool revr_fit_DragFloat(A&&... a) { return menu_text::DragFloat(std::forward<A>(a)...); }
+template <class... A> inline bool revr_fit_ColorEdit3(A&&... a) { return menu_text::ColorEdit3(std::forward<A>(a)...); }
+template <class... A> inline void revr_fit_SetTooltip(const char* fmt, A&&... a) { menu_text::hint_tooltip(fmt, std::forward<A>(a)...); }
+} // namespace ImGui
+
+#define Checkbox(...) revr_fit_Checkbox(__VA_ARGS__)
+#define SliderFloat(...) revr_fit_SliderFloat(__VA_ARGS__)
+#define SliderInt(...) revr_fit_SliderInt(__VA_ARGS__)
+#define DragFloat(...) revr_fit_DragFloat(__VA_ARGS__)
+#define ColorEdit3(...) revr_fit_ColorEdit3(__VA_ARGS__)
+#define SetTooltip(...) revr_fit_SetTooltip(__VA_ARGS__)
+#endif

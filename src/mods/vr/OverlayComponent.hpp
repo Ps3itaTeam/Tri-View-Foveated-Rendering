@@ -29,6 +29,7 @@ private:
         float last_x{};
         float last_y{};
         bool full_bounds_set{false};   // D3D12: Overlay zeigt die ganze Textur
+        bool blank_sent{false};        // [GPU 30.10.2026] D3D12: the blank texture is the overlay's texture already
     } m_overlay_data;
 
     // overlay handle

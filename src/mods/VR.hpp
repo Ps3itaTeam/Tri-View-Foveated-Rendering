@@ -1,4 +1,5 @@
 #pragma once
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 
 #include <chrono>
 #include <bitset>
@@ -27,31 +28,17 @@
 #include "vr/runtimes/OpenXR.hpp"
 #include "vr/runtimes/OpenVR.hpp"
 #include "vr/CameraDuplicator.hpp"
+#include "vr/QuadView.hpp"   // [QUADVIEW] shared state of the quad-view foveated rendering
 
 #include "HookManager.hpp"
 
 #include "Mod.hpp"
 
-#include "PDAFWPlugin.h"
-
 class REManagedObject;
 
 class VR : public Mod {
 public:
-    CameraData cameraData[2];
-    D3D12RendererAPI* d3d12Renderer = nullptr;
-    
     template <typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
-    struct EyeState {
-        ComPtr<ID3D12Resource> motion_vectors{};
-        ComPtr<ID3D12Resource> depth{};
-        ComPtr<ID3D12Resource> uiBufferTex{};
-
-        sdk::intrusive_ptr<sdk::renderer::Texture> motion_vectors_copy{};
-        sdk::intrusive_ptr<sdk::renderer::Texture> depth_copy{};
-    };
-
-    std::array<EyeState, 2> m_eye_states{};
 
     // [UI_TRENNUNG 28.09.2026 -- Ansage des Users] Das VR-UI wird im Multipass
     // pro Auge zwischen "vor Overlay" und "vor PrepareOutput" ins PostMainTarget
@@ -72,6 +59,16 @@ public:
         std::atomic<uint64_t> final_frame{0};
         std::atomic<uint64_t> used_frame{0};
         std::atomic<void*> scene_layer{nullptr};   // [UI_FARBE] passende Upscaler-Farbkopie finden
+        // [UI CURVE 27.10.2026] the engine textures the copies were last taken from (dump report)
+        std::atomic<void*> hudless_src{nullptr};
+        std::atomic<void*> final_src{nullptr};
+        // [UI COPIES 30.10.2026] the engine texture the two copies were cloned from and the generation they were cloned
+        // in (m_ui_capture_generation): a device reset, another engine texture or refresh_ui_capture() makes them again.
+        // The lock covers the copies themselves (the render threads make and fill them, the copier reads them).
+        void* made_from{nullptr};
+        uint32_t generation{0};
+        uint64_t source_change_frame{0};
+        std::mutex mtx{};
     };
     // [UI_REIHENFOLGE 28.09.2026] Sonde: Reihenfolge der Kopien im Frame, z. B. "H0H1F0F1"
     std::mutex m_ui_order_mtx{};
@@ -84,23 +81,36 @@ public:
     std::array<std::atomic<uint32_t>, 2> m_ui_pair_old{};
     std::array<std::atomic<uint32_t>, 2> m_ui_cap_hud{};
     std::array<std::atomic<uint32_t>, 2> m_ui_cap_fin{};
-    std::array<UiCapture, 2> m_ui_capture{};
+    // [0] / [1] the eyes; [2] [MONO UI] the shared wide view (multipass quad view with the shared periphery)
+    static constexpr int UI_CAPTURE_CENTRE = 2;
+    std::array<UiCapture, 3> m_ui_capture{};
+    // [MONO UI] the GUI copies of `index` (0 / 1 eyes, 2 shared wide view) from the same engine frame, or false
+    bool ui_capture_pair(int index, ID3D12Resource*& hudless, ID3D12Resource*& final_tex, void*& scene_layer);
+    float get_ui_distance() const;
+    // [UI CURVE 27.10.2026] for the frame dump: the order of the interface copies in a frame and the engine textures they
+    // were taken from, per view
+    std::string ui_capture_report(); // the 2D UI distance option (m)
+    // [UI COPIES 30.10.2026] every interface copy is cloned again at its next capture (the old ones live on a few frames:
+    // work recorded before may still read them); the reason goes to the log
+    void refresh_ui_capture(const char* reason);
+    uint32_t ui_capture_refreshes() const { return m_ui_capture_refreshes.load(); }
+    std::atomic<uint32_t> m_ui_capture_generation{1};
+    std::atomic<uint32_t> m_ui_capture_refreshes{0};
+    std::mutex m_ui_capture_old_mtx{};
+    std::vector<std::pair<sdk::intrusive_ptr<sdk::renderer::Texture>, uint64_t>> m_ui_capture_old{};
     // [UI_MASKE_ROT 28.09.2026] Sichttest: erkannte UI-Pixel rot einfaerben
     // (Lua-Global __re4_uitest_clear == 6, auf dem Hauptthread uebernommen).
     std::atomic<bool> m_ui_debug_mask{false};
     void ui_capture(void* render_context, sdk::renderer::RenderLayer* scene_layer, bool final_pass);
     ID3D12Resource* ui_capture_resource(int eye, bool final_pass);
     
-    int m_camera_data_update_frame_count{};
-    void update_camera_data();
-    CameraData& get_camera_data(int index) { return cameraData[index]; };
 
 public:
     enum RenderingTechnique {
         ALTERNATING, // AFR
         SEQUENTIAL_FRAME, // Two frames, synchronized
-        MULTIPASS, // Native stereo rendering, single frame
-        ALTERNATE_FRAME_WARPING // AFW
+        MULTIPASS // Native stereo rendering, single frame
+        // ([AFW fix91 19.11.2026] 3 was ALTERNATE_FRAME_WARPING, AFW with its external plugin: gone)
     };
 
 public:
@@ -131,11 +141,24 @@ public:
     void on_application_entry(void* entry, const char* name, size_t hash) override;
 
     void on_draw_ui() override;
-    // Drawn by the Upscaler UI, the rendering technique lives at the end of that tree
-    void draw_rendering_technique_ui();
+#if defined(RE4)
+    // [CUT2D_AFW] Talemann's RE4VRUi asks for AFW while the canvas of a 2D cutscene is shown (in multipass the heads were
+    // missing there, REFramework #1536). AFW is gone (fix91): the canvas is shown in Single Frame Multipass, so this does
+    // nothing. Kept so that RE4VRUi.cpp stays as Talemann wrote it.
+    void set_cutscene_afw(bool) {}
+
+    // [CRAFT fix159 25.11.2026] how much farther from the eyes the attache case's "Crea" page shows its item (metres), the
+    // option at the end of MOD OPTIONS (draw_craft_push_option, called by REFramework.cpp). It lived in RE4VRUi (fix128 /
+    // fix129); moved here so that Talemann's files stay as he wrote them.
+    float craft_push_m() const { return m_craft_push_cm->value() / 100.0f; }
+    void draw_craft_push_option();
+#endif
     // Bare "Recenter View" button, drawn at the very top of the REFramework window
     // (REFramework.cpp) because the whole VR tree is hidden by the mod filter in Mods.cpp.
     bool draw_recenter_button();   // true = Knopf wurde gezeichnet
+    // [RESET VIEW 11.11.2026] "Mod Options" (games without the RE4 menu): the view recentred and the standing origin
+    // set to where the headset is now, in one button
+    void draw_reset_view_button();
     // Bare "Resolution Scale" slider, same reason as draw_recenter_button. OpenXR only.
     // Returns true when the config should be saved.
     bool draw_resolution_scale_slider();
@@ -145,7 +168,11 @@ public:
     // NICHT direkt an set_mono_rendering, sondern in den Mono-Broker (RE4VRUi::mono_apply)
     // -- so schaltet ein Raetsel beim Verlassen Mono nicht ab, solange der Toggle an ist.
     void draw_user_mono_toggle();
+#if defined(RE4) || REVR_RELEASE
+    bool is_user_mono() const { return false; } // [RELEASE fix132 23.11.2026] RE4: fixed off, no switch in the menu; [fix139] the release too
+#else
     bool is_user_mono() const { return m_user_mono->value(); }
+#endif
     // Arms the one-shot auto recenter; called at the end of both initialize_openvr/openxr.
     void arm_auto_recenter();
     // Neigung des Zeigestrahls in Grad (negativ = nach unten).
@@ -208,6 +235,12 @@ public:
         return m_render_frame_count;
     }
 
+    // [JITTER LATCH 10.11.2026] the frame number the scene layer updates run under (the one the per-frame latches are
+    // keyed by; the upscaler looks them up with get_render_frame_count of the frame it composites)
+    int32_t get_update_frame_count() const {
+        return m_frame_count;
+    }
+
     bool is_using_afr() const {
         return m_rendering_technique->value() == RenderingTechnique::ALTERNATING;
     }
@@ -216,37 +249,85 @@ public:
         return m_rendering_technique->value() == RenderingTechnique::MULTIPASS;
     }
 
-    bool is_using_afw() const {
-        return m_rendering_technique->value() == RenderingTechnique::ALTERNATE_FRAME_WARPING;
+    // the eye-to-head transforms and projections as the runtime gives them (foveated rendering log)
+    std::string describe_eyes() const;
+
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] debug build only
+    // [LAYER TRACE 27.10.2026] the frame dump report lists the scene layers of the dumped frames (see layer_trace in VR.cpp)
+    std::string layer_trace_frame_header(int render_frame);
+    std::string layer_trace_layer_line(sdk::renderer::layer::Scene* layer);
+#endif
+
+    // [STEREO FOVEA 27.10.2026] quad view (multipass only): both eyes rendered every frame, each with its own fovea view,
+    // the periphery from one shared wide view (or one per eye for comparison)
+    bool is_stereo_fovea() const {
+        return is_using_multipass() && quadview::State::get().requested();
     }
+
+    bool is_quadview_requested() const {
+        return is_stereo_fovea();
+    }
+
+    // [MONO PERIPHERY 27.10.2026] quad view in multipass with ONE wide view for both eyes (rendered from between the
+    // eyes, reprojected to each eye) instead of one per eye: three scene layers instead of four
+    bool is_mono_periphery() const {
+        return is_stereo_fovea() && quadview::State::get().mono_periphery();
+    }
+
+    // [MONO PERIPHERY] pass / eye number of the shared wide view (0 = left, 1 = right)
+    static constexpr int32_t CENTER_EYE = 2;
+
+    // number of camera clones the current technique needs (CameraDuplicator)
+    uint32_t wanted_camera_clones() const {
+#if !defined(RE4)
+        // [MENU CANVAS 12.11.2026] the canvas shows the frame the monitor would show: the game camera alone draws it
+        // (with clones and the quad view the RE7 test of 12.11.2026 showed parts twice, parts missing and wrong sizes)
+        if (m_flatscreen_overlay) {
+            return 0u;
+        }
+#endif
+
+        if (is_using_multipass()) {
+            if (!quadview::State::get().requested()) {
+                return 1u;
+            }
+
+            return quadview::State::get().mono_periphery() ? 2u : 3u;
+        }
+
+        return 0u;
+    }
+
+    // [STEREO FOVEA] the view a scene layer's camera renders: which eye and whether it is a fovea (inset) view.
+    // Multipass + quad view, stereo periphery: primary = wide left, clone 0 = wide right, clone 1 = fovea left,
+    // clone 2 = fovea right. Mono periphery: primary = wide view of both eyes (eye = CENTER_EYE), clone 0 = fovea left,
+    // clone 1 = fovea right. Plain multipass: primary = left, clone 0 = right. Returns false for a camera that is none of
+    // these (sniper scope etc.) and outside multipass.
+    bool view_of_camera(const RECamera* camera, int32_t& eye, bool& fovea) const;
+
+    // [FOVEA FOV TEST 06.11.2026 evening] the field of view (degrees, the camera's FOV property: vertical when vertical is set,
+    // otherwise horizontal, for that aspect) of the narrowest frustum around the camera's axis that holds this eye's fovea
+    // with a margin, never wider than max_fov; max_fov outside the quad view or without a fovea yet. Set in update_camera
+    // (WaitRendering, the last write before the frame is rendered) for the fovea cameras during the GPU test.
+    float fovea_cull_fov(int32_t eye, float max_fov, float aspect, bool vertical);
+
+    // [MONO PERIPHERY] projection of the shared wide view: the smallest frustum that holds both eyes' frusta, and the
+    // eye transform of its camera (between the eyes). Both follow the zoom like the eye ones.
+    Matrix4x4f get_union_projection_matrix();
+    // [NEAR CLIP 09.11.2026] the smallest near clip plane the VR cameras get (0 = the game's own); see m_near_clip_min
+    float get_near_clip_min() const { return (std::max)(m_near_clip_min->value(), 0.0f); }
+    Matrix4x4f get_center_eye_transform();
+    void publish_frusta(); // -> quadview::State (geometry for the reprojection shader), once per frame
+
+    // a clone the technique does not use (left over from another setting): its scene layer is switched off
+    bool is_skipped_layer_camera(const RECamera* camera) const;
+    // switches the scene layers of skipped clones off (via.render.layer.Scene Enable) and the others on, once per frame
+    void apply_layer_skips();
+    uint32_t m_layers_switched_off{0}; // how many clone layers are off right now (log)
 
     RenderingTechnique get_rendering_technique() const {
         return (RenderingTechnique)m_rendering_technique->value();
     }
-
-    // [CUT2D_AFW 02.10.2026 -- Ansage des Users] Umkehrung von [CUT2D_MULTIPASS]: im
-    // Multipass verliert das 2D-Bild mitten in der Cutscene die Koepfe (REFramework #1536).
-    // Wer Single Frame Multipass spielt, bekommt fuer die Dauer der Leinwand AFW, danach
-    // seine Technik zurueck. Gespeichert wird immer seine (on_config_save). AFR, AFW und
-    // Sequential bleiben unberuehrt. Hat er in der Cutscene selbst umgeschaltet, bleibt das.
-    void set_cutscene_afw(bool on) {
-        int32_t& value = m_rendering_technique->value();
-
-        if (on) {
-            if (!m_cut2d_saved.has_value() && value == MULTIPASS) {
-                m_cut2d_saved = value;
-                value = ALTERNATE_FRAME_WARPING;
-            }
-        } else if (m_cut2d_saved.has_value()) {
-            if (value == ALTERNATE_FRAME_WARPING) {
-                value = *m_cut2d_saved;
-            }
-
-            m_cut2d_saved.reset();
-        }
-    }
-
-    std::optional<int32_t> m_cut2d_saved{};
 
     // Functions that generally use a mutex or have more complex logic
     float get_standing_height();
@@ -411,6 +492,29 @@ public:
         return m_flatscreen_overlay;
     }
 
+    // [FXAA 12.11.2026] FXAA off in every view (CameraDuplicator::force_fxaa_off, disable_bad_effects)
+    bool is_fxaa_forced_off() const {
+        return m_force_fxaa_off->value();
+    }
+
+    // [WINDOW MODE fix103 20.11.2026]
+    bool is_force_windowed() const {
+        return m_force_windowed->value();
+    }
+
+    // [ENGINE SHADOWS 30.10.2026] the engine shadow test of FoveatedRendering: while >= 0 disable_bad_effects keeps the
+    // dynamic shadows at this value (0 off, 1 on) instead of forcing them on (it did so every frame: the test of 30.10
+    // measured nothing). -1 = no test.
+    void set_dynamic_shadow_override(int value) {
+        m_dynamic_shadow_override.store(value);
+    }
+
+    // [DIRECT 8 BIT 30.10.2026] the headset texture the quad view's eye pass may write for `eye` itself, or null (see
+    // vrmod::D3D12Component::direct_eye_target). Render thread.
+    ID3D12Resource* direct_eye_target(int eye) {
+        return m_d3d12.direct_eye_target(this, eye);
+    }
+
     void set_flatscreen_overlay(bool state) {
         m_flatscreen_overlay = state;
     }
@@ -424,6 +528,16 @@ public:
         if (width < 0.1f) { width = 0.1f; }
         if (width > 20.0f) { width = 20.0f; }
         m_flatscreen_overlay_width = width;
+    }
+
+    // [CANVAS ASPECT 12.11.2026] width / height of the picture in the frame (0 = as the texture). The frame is the headset's
+    // backbuffer (RE7: 3400x3468); a game picture made for another shape is shown with that shape (wider texels).
+    float get_flatscreen_overlay_aspect() const {
+        return m_flatscreen_overlay_aspect;
+    }
+
+    void set_flatscreen_overlay_aspect(float aspect) {
+        m_flatscreen_overlay_aspect = aspect > 0.2f && aspect < 5.0f ? aspect : 0.0f;
     }
 
     // [CANVAS_RECENTER 26.09.2026] Die raumfeste Leinwand stellt sich bei jedem Recenter neu vor
@@ -866,17 +980,54 @@ public:
     }
 
     void set_multipass_camera(RECamera* camera, uint32_t index) {
-        if (index >= 2) {
+        if (index >= m_multipass_cameras.size()) {
             return;
         }
 
         m_multipass_cameras[index] = camera;
     }
 
-    std::array<RECamera*, 2> get_cameras() const;
+    // [STEREO FOVEA] primary camera or one of its clones in use (the projection hook must serve all of them)
+    bool is_multipass_camera(const REManagedObject* camera) const {
+        if (camera == nullptr) {
+            return false;
+        }
+
+        for (auto existing_camera : m_multipass_cameras) {
+            if (existing_camera != nullptr && (const REManagedObject*)existing_camera == camera) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // The cameras that get the headset pose every frame (update_camera_origin) and the render settings:
+    // [0] primary, then its clones in use, nullptr after them. [STEREO FOVEA 27.10.2026] 4 entries: the fovea clones
+    // of the multipass quad view got no pose (test 27.10.2026: third-person view inside the fovea).
+    static constexpr size_t MAX_CAMERAS = 4;
+    std::array<RECamera*, MAX_CAMERAS> get_cameras() const;
+
+#if defined(RE7)
+    void update_menu_canvas();     // [MENU CANVAS 12.11.2026]
+    void apply_menu_sheet();       // [MENU SHEET 14.11.2026]
+    void update_menu_sheet_objects(); // [MENU SHEET fix63] LateUpdateBehavior: the label's mesh dynamic while the sheet is up
+    void find_menu_sheet_label();  // [MENU SHEET 14.11.2026]
+    void update_game_vr_menus();   // [GAME VR MENUS 12.11.2026]
+#if !REVR_RELEASE // [RELEASE SWITCH fix141]
+    void write_vr_research_file(); // [VR RESEARCH 12.11.2026]
+#endif
+#endif
+
+    // [HEIGHT PROBE 12.11.2026] the frame's camera heights for the periodic log (VR.cpp)
+#if !REVR_RELEASE // [RELEASE SWITCH fix141]
+    std::string height_probe_text();
+#endif
     auto& get_camera_duplicator() {
         return m_camera_duplicator;
     }
+
+    bool is_quadview_inset_layer(void* scene_layer) const; // [QUADVIEW] scene layer of the cloned (inset) camera
 
 private:
     Vector4f get_position_unsafe(uint32_t index) const;
@@ -887,8 +1038,12 @@ private:
     // Hooks
     void on_view_get_size(REManagedObject* scene_view, float* result) override;
     static void inputsystem_update_hook(void* ctx, REManagedObject* input_system);
+    bool wants_camera_matrix_hooks() const override { return true; }
     void on_camera_get_projection_matrix(REManagedObject* camera, Matrix4x4f* result) override;
     static Matrix4x4f* gui_camera_get_projection_matrix_hook(REManagedObject* camera, Matrix4x4f* result);
+    // [QUADVIEW] Turns the eye projection into the inset (gaze) sub-frustum when the inset view is being set up.
+    void apply_quadview_inset(REManagedObject* camera, Matrix4x4f& projection, bool gui_camera);
+    void narrow_fovea_layer(sdk::renderer::layer::Scene* layer, int32_t eye, uint32_t keep_whole); // [LIGHTS fix82 / fix83] see VR.cpp
     void on_camera_get_view_matrix(REManagedObject* camera, Matrix4x4f* result) override;
     
     static HookManager::PreHookResult pre_set_hdr_mode(std::vector<uintptr_t>& args, std::vector<sdk::RETypeDefinition*>& arg_tys, uintptr_t ret_addr);
@@ -952,7 +1107,7 @@ private:
     std::optional<std::string> hijack_wwise_listeners(); // audio hook
 
     std::optional<std::string> reinitialize_openvr() {
-        spdlog::info("Reinitializing OpenVR");
+        REVR_LOG(spdlog::info("Reinitializing OpenVR"));
         std::scoped_lock _{m_openvr_mtx};
 
         m_runtime.reset();
@@ -966,14 +1121,14 @@ private:
         auto e = initialize_openvr();
 
         if (e) {
-            spdlog::error("Failed to reinitialize OpenVR: {}", *e);
+            REVR_LOG(spdlog::error("Failed to reinitialize OpenVR: {}", *e));
         }
 
         return e;
     }
 
     std::optional<std::string> reinitialize_openxr() {
-        spdlog::info("Reinitializing OpenXR");
+        REVR_LOG(spdlog::info("Reinitializing OpenXR"));
         std::scoped_lock _{m_openvr_mtx};
 
         if (m_is_d3d12) {
@@ -992,7 +1147,7 @@ private:
         auto e = initialize_openxr();
 
         if (e) {
-            spdlog::error("Failed to reinitialize OpenXR: {}", *e);
+            REVR_LOG(spdlog::error("Failed to reinitialize OpenXR: {}", *e));
         }
 
         return e;
@@ -1037,7 +1192,17 @@ private:
     float m_nearz{ 0.1f };
     float m_farz{ 3000.0f };
 
-    std::array<RECamera*, 2> m_multipass_cameras{};
+    // [STEREO FOVEA] [0] = primary camera, [1..3] = its clones (multipass: [1] = right eye; quad view: the fovea /
+    // the other eye's views, see view_of_camera)
+    std::array<RECamera*, 4> m_multipass_cameras{};
+
+    // [CPU 22.10.2026] The view matrix hook runs hundreds of times per frame and needs the primary camera, which is a
+    // reflection call through the camera duplicator's hook. Looked up once per application entry instead.
+    std::atomic<uint32_t> m_entry_serial{1};
+    std::mutex m_view_cameras_mtx{};
+    uint32_t m_view_cameras_serial{0};
+    std::array<RECamera*, MAX_CAMERAS> m_view_cameras{};
+    std::array<RECamera*, MAX_CAMERAS> get_cameras_for_view_hook();
 
     std::shared_ptr<VRRuntime> m_runtime{std::make_shared<VRRuntime>()}; // will point to the real runtime if it exists
     std::shared_ptr<runtimes::OpenVR> m_openvr{std::make_shared<runtimes::OpenVR>()};
@@ -1177,11 +1342,37 @@ private:
         std::array<ComPtr<ID3D12Resource>, 2> eye_textures{};
         std::array<sdk::intrusive_ptr<sdk::renderer::Texture>, 2> native_res_copies{}; // used with TemporalUpscaler disabled
         std::array<uint32_t, 2> allocated_size{};
-        uint32_t pass{0};
+        uint32_t pass{0}; // eye of the scene layer being updated; [MONO PERIPHERY] CENTER_EYE for the shared wide view
     } m_multipass{};
+
+    // [PROBE FIX 27.10.2026] the scene layer each clone rendered into (by clone index) and whether we switched it off
+    std::array<sdk::renderer::layer::Scene*, MAX_CAMERAS - 1> m_clone_layers{};
+    std::array<bool, MAX_CAMERAS - 1> m_clone_layer_off{};
+    // [MONO PERIPHERY] union projection and frusta of this frame (recomputed once per frame)
+    int m_union_frame{-1};
+    Matrix4x4f m_union_projection{glm::identity<Matrix4x4f>()};
+    // [LAYER TRACE] GUI projection requests per pass in the current frame (0 left, 1 right, 2 centre)
+    std::array<std::atomic<uint32_t>, 3> m_gui_proj_calls{};
     
 
     Vector4f m_original_camera_position{ 0.0f, 0.0f, 0.0f, 0.0f };
+
+    // [HEIGHT PROBE 12.11.2026]
+    struct HeightProbe {
+        bool valid{false};
+        float hmd{}, standing{}, game_camera{}, camera_transform{};
+        std::array<float, 4> views{};
+        int view_count{0};
+        bool has_player{false};
+        bool has_head{false};
+        float player{}, head{};
+    };
+
+    std::mutex m_height_probe_mutex{};
+    HeightProbe m_height_probe{};
+#if !REVR_RELEASE // [RELEASE SWITCH fix141]
+    void sample_height_probe(const std::array<RECamera*, MAX_CAMERAS>& cameras);
+#endif
     glm::quat m_original_camera_rotation{ glm::identity<glm::quat>() };
 
     Matrix4x4f m_original_camera_matrix{ glm::identity<Matrix4x4f>() };
@@ -1258,40 +1449,26 @@ private:
     // Zuletzt in apply_projection_tweaks errechneter Zoomfaktor -- auch der aus einem
     // gesetzten FOV, den man ohne die Projektion nicht kennt.
     mutable float m_last_zoom_factor{1.0f};
-    const ModToggle::Ptr m_clear_before_framewarp{ModToggle::create(generate_name("ClearBeforeFramewarp"), false)};
-    const ModToggle::Ptr m_enable_ui_fix{ModToggle::create(generate_name("EnableUIFix"), true)};
-    const ModToggle::Ptr m_framewarp_debug{ModToggle::create(generate_name("FramewarpDebug"), false)};
-    const ModSlider::Ptr m_ignore_motion_threshold{ModSlider::create(generate_name("IgnoreMotionThreshold"), 1.0f, 100.0f, 2.5f)};
-
-    const ModCombo::Ptr m_framewarp_mode{ModCombo::create(generate_name("Framewarp Mode"),
-        {
-            "None",
-            "AlternateEyeWarping",
-            "PreviousFrameWarping",
-            "CombinedWarping",
-        },
-        (int)FrameWarpMode::CombinedWarping)};
+    // [AFW fix91 19.11.2026] AFW's values were here (ClearBeforeFramewarp, EnableUIFix, FramewarpDebug, IgnoreMotionThreshold,
+    // Framewarp Mode); none of them was saved or had a menu entry
     const ModCombo::Ptr m_rendering_technique{ 
         ModCombo::create(generate_name("RenderingTechnique_V2"),
         {
             "Alternating/AFR", 
             "Two Frame Sequential", 
             "Single Frame Multipass",
-            "AFW (beta)"
+            "(3: was AFW, gone)"
         }, 
 #if TDB_VER < 69
         1 // Previous rendering technique
 #else
-        // [KEIN_AFW_START 2026-08-15] War 3 (Alternate Frame Warping). AFW ist hier buggy und
-        // laesst sich im Spiel nicht gefahrlos wechseln (Umschalten zur Laufzeit crasht),
-        // also darf es gar nicht erst der Startwert sein. 2 = Single Frame Multipass, der
-        // Upstream-Weg vor AFW. Wer AFW testen will, setzt VR_RenderingTechnique_V2=3 in
-        // re2_fw_config.txt -- die Config sticht diesen Default ohnehin.
+        // ([AFW fix91 19.11.2026] the fourth name only keeps the stored values what they were: AFW itself is gone)
         2 // Single Frame Multipass
 #endif
         )
     };
     // [SYNC_MODE_CFG 2026-09-30] Sync Mode in der Config: 1=Early, 2=Late, 3=Very Late.
+    // [fix142 23.11.2026] Early in every game (RE4 had Late from fix132: the user found Early better)
     const ModInt32::Ptr m_sync_mode{ ModInt32::create(generate_name("SyncMode"), 1) };
     const ModToggle::Ptr m_user_mono{ ModToggle::create(generate_name("UserMonoRendering"), false) };   // [USER_MONO]
     void apply_sync_mode() {
@@ -1302,6 +1479,130 @@ private:
     const ModToggle::Ptr m_use_custom_view_distance{ ModToggle::create(generate_name("UseCustomViewDistance"), false) };
     const ModToggle::Ptr m_hmd_oriented_audio{ ModToggle::create(generate_name("HMDOrientedAudio"), true) };
     const ModSlider::Ptr m_view_distance{ ModSlider::create(generate_name("CustomViewDistance"), 10.0f, 3000.0f, 500.0f) };
+    // [NEAR CLIP 09.11.2026] smallest near clip plane of the VR cameras (m, 0 = the game's own). RE2 / RE3 first person:
+    // with the head hidden (its bone scaled to zero) the hair is pulled into strands that end at the head, 1-4 cm from the
+    // camera (dumps of 09.11.2026: a dark diagonal line in the lower half of every view); a near plane past them clips them.
+#if defined(RE2) || defined(RE3)
+    const ModSlider::Ptr m_near_clip_min{ ModSlider::create(generate_name("NearClipMin"), 0.0f, 0.2f, 0.05f) };
+#else
+    const ModSlider::Ptr m_near_clip_min{ ModSlider::create(generate_name("NearClipMin"), 0.0f, 0.2f, 0.0f) };
+#endif
+#if defined(RE4)
+    // [CRAFT fix159] see craft_push_m (centimetres; the user's 28 cm of fix132)
+    const ModSlider::Ptr m_craft_push_cm{ ModSlider::create(generate_name("CraftMenuItemFartherFromEyes"), 0.0f, 50.0f, 28.0f) };
+#endif
+#if !defined(RE4)
+    // [MENU SIZE 11.11.2026] the VR menu panel's width (m) and its text size (right side: options and explanations);
+    // RE4 sets both in its own menu editor
+    const ModSlider::Ptr m_menu_panel_width{ ModSlider::create(generate_name("MenuPanelWidth"), 0.6f, 2.5f, 1.15f) };
+    const ModSlider::Ptr m_menu_text_scale{ ModSlider::create(generate_name("MenuTextScale"), 0.6f, 2.0f, 0.9f) };
+#if defined(RE7)
+    // [MENU CANVAS 12.11.2026] the main menu on the flat canvas (VR.cpp update_menu_canvas)
+    // [MENU HANG 14.11.2026] off by default: with it on the game's GPU hangs in the main menu after 1-9 minutes (DRED: the
+    // game's own frame stops in a compute dispatch); in stereo the menu ran 24 minutes without it
+    const ModToggle::Ptr m_menu_canvas{ ModToggle::create(generate_name("MainMenuCanvas"), false) };
+    // [MOVIE CANVAS 14.11.2026] full-screen movies (the game's 2D VR movie request) on the canvas in 16:9, on its own
+    const ModToggle::Ptr m_movie_canvas{ ModToggle::create(generate_name("MovieCanvas"), true) };
+    // [MENU VIEW 14.11.2026] main menu in stereo: the view raised by this much (m) while the game camera is the menu's
+    // (defaults: the user's values of 14.11.2026, cassette deck readable)
+    const ModSlider::Ptr m_menu_view_height{ ModSlider::create(generate_name("MainMenuViewHeight"), -1.0f, 1.5f, 0.15f) };
+    // and moved back (m, horizontally, away from where the game camera looks; negative moves forward)
+    const ModSlider::Ptr m_menu_view_back{ ModSlider::create(generate_name("MainMenuViewBack"), -1.0f, 2.0f, 0.15f) };
+    // [MENU SHEET 14.11.2026] the options: the game takes its camera 12 cm above the cassette label (the options sheet).
+    // In stereo the view stays where it is at the deck (the scene keeps its size) and only the sheet - the label mesh and
+    // the options GUI drawn on it - is brought up in front of the view, enlarged by this factor, at this distance from the
+    // head, turned so it is seen as the game's close-up shows it (VR.cpp apply_menu_sheet; user 14.11.2026: "only the
+    // sheet, not the whole scene")
+    const ModToggle::Ptr m_menu_sheet{ ModToggle::create(generate_name("MainMenuOptionsSheet"), true) };
+    const ModSlider::Ptr m_menu_sheet_size{ ModSlider::create(generate_name("MainMenuOptionsSheetSize"), 1.0f, 5.0f, 2.44f) };
+    const ModSlider::Ptr m_menu_sheet_distance{ ModSlider::create(generate_name("MainMenuOptionsSheetDistance"), 0.2f, 1.2f, 0.45f) };
+    // [MENU SHEET 14.11.2026 fix61] how far below eye level the sheet comes, straight ahead of the head (degrees)
+    // [fix64] the guide line below the sheet while it is up (degrees lower; negative: higher)
+    const ModSlider::Ptr m_menu_sheet_guide_down{ ModSlider::create(generate_name("MainMenuOptionsGuideLower"), -45.0f, 45.0f, -30.4f) };
+    const ModSlider::Ptr m_menu_sheet_below{ ModSlider::create(generate_name("MainMenuOptionsSheetBelowEyes"), 0.0f, 45.0f, 13.65f) };
+
+    float m_menu_closeup{0.0f};   // 0 = the deck's framing .. 1 = the options close-up (the game camera's way to the label)
+    bool m_menu_camera_active{false};
+    // the game camera's pose at the deck (recorded while it stands still there), held for the view during the options
+    bool m_menu_deck_valid{false};
+    Vector4f m_menu_deck_pos{};
+    glm::quat m_menu_deck_rot{glm::identity<glm::quat>()};
+    float m_menu_deck_label_dist{0.0f};
+    Vector4f m_menu_prev_cam_pos{};
+    bool m_menu_hold{false};
+    // the options sheet: the label mesh's game object (found by name) and the options GUI's (seen when drawn)
+    ::REGameObject* m_menu_label{nullptr};
+    uint32_t m_menu_label_search_frame{0};
+    uint32_t m_menu_label_searches{0};
+    // set on the render thread (the GUI draws), read on the game thread
+    std::atomic<::REGameObject*> m_menu_option_gui{nullptr};
+    std::atomic<int64_t> m_menu_option_gui_seen_ns{0};
+    // [MENU SHEET fix63] The label is a static mesh for the renderer (transform and draw flag ignored, fix59-62); while
+    // the sheet is up its mesh is switched to dynamic and the label itself is moved.
+    struct MenuSheetSaved {
+        ::RETransform* transform{nullptr};
+        Vector4f pos{};
+        glm::quat rot{glm::identity<glm::quat>()};
+        Vector4f local_scale{};
+        Matrix4x4f world{glm::identity<Matrix4x4f>()};
+    };
+    MenuSheetSaved m_menu_sheet_saved{};    // the label's pose on the desk, saved when the move starts
+    bool m_menu_sheet_applied{false};       // the label is moved (its pose to set back)
+    bool m_menu_sheet_copy_wanted{false};   // the sheet is up: set by apply_menu_sheet, used by update_menu_sheet_objects
+    // [fix63] the label's mesh switched from static to dynamic while the sheet is up, and its own flags to set back
+    bool m_menu_sheet_label_static{false};
+    bool m_menu_sheet_label_force_dyn{false};
+    bool m_menu_sheet_label_enabled{true};
+    bool m_menu_sheet_label_hidden{false};  // (switched to dynamic)
+    ::REGameObject* m_menu_sheet_hidden_go{nullptr};
+    ::REManagedObject* m_menu_sheet_hidden_mesh{nullptr};
+    bool m_menu_sheet_methods_logged{false};
+    bool m_menu_sheet_copy_logged{false};
+    // the move for the options GUI's draws (render thread): set by apply_menu_sheet while the sheet is up
+    std::mutex m_menu_sheet_gui_mtx{};
+    bool m_menu_sheet_gui_valid{false};
+    Matrix4x4f m_menu_sheet_gui_x{glm::identity<Matrix4x4f>()};
+    Vector4f m_menu_sheet_label_up_pos{};   // where the label is moved to this frame, and where it lies
+    Vector4f m_menu_sheet_label_down_pos{};
+    // [fix64] per GUI element (render thread): its world matrix before the move and what was written, set back after the draw
+    struct MenuSheetGuiEntry {
+        Matrix4x4f original{};
+        Matrix4x4f written{};
+        bool pending{false};
+    };
+    std::unordered_map<REComponent*, MenuSheetGuiEntry> m_menu_sheet_gui_entries{};
+    std::atomic<bool> m_menu_sheet_up_for_gui{false};
+    Vector3f m_menu_sheet_heading{};      // the sheet's horizontal direction from the head (under m_menu_sheet_gui_mtx)
+    Vector4f m_menu_sheet_eye{};
+    Vector4f m_menu_sheet_head_fwd{};
+    bool m_menu_sheet_engaged{false};
+    uint32_t m_menu_sheet_log_lines{0};
+    bool m_menu_sheet_logged_full{false};
+    std::atomic<bool> m_menu_sheet_logged_gui{false};
+    std::atomic<bool> m_menu_sheet_gui_tree_logged{false};
+    // the game camera's framings in the main menu, logged when they change (for the booklet's close-up)
+    Vector4f m_menu_framing_pos{};
+    glm::quat m_menu_framing_rot{glm::identity<glm::quat>()};
+    float m_menu_framing_fov{-1.0f};
+    uint32_t m_menu_framing_lines{0};
+    const ModSlider::Ptr m_menu_canvas_width{ ModSlider::create(generate_name("MainMenuCanvasWidth"), 0.5f, 6.0f, 2.445f) };
+    const ModSlider::Ptr m_menu_canvas_distance{ ModSlider::create(generate_name("MainMenuCanvasDistance"), 0.5f, 6.0f, 2.055f) };
+    // [CANVAS ASPECT 12.11.2026] the screen's width / height, 0 = automatic (the game camera's projection)
+    const ModSlider::Ptr m_menu_canvas_aspect{ ModSlider::create(generate_name("MainMenuCanvasAspect"), 0.0f, 2.5f, 0.0f) };
+    float m_menu_canvas_logged_aspect{-1.0f};
+    bool m_menu_canvas_on{false};
+    // [GAME VR MENUS 12.11.2026] experimental: app.VrGui.is3DVrMode() answers true, the game places its menus as in its
+    // PlayStation VR mode (VR.cpp update_game_vr_menus)
+    const ModToggle::Ptr m_game_vr_menus{ ModToggle::create(generate_name("GameVrMenus"), false) };
+    bool m_game_vr_menus_hooked{false};
+    static inline std::atomic<bool> s_game_vr_menus_active{false};
+    // [MOVIE CANVAS 14.11.2026] the game's standing 2D VR requests (app.vr.VrSystemService.Request2DVRTypeEnum flags)
+    static inline std::atomic<uint32_t> s_2dvr_requests{0};
+    bool m_2dvr_hooked{false};
+#endif
+    // [MENU COMBO 11.11.2026] left trigger + left B (triangle on PS VR2 Sense) opens / closes the menu, as in RE4
+    bool m_menu_combo_was{false};
+#endif
     const ModSlider::Ptr m_motion_controls_inactivity_timer{ ModSlider::create(generate_name("MotionControlsInactivityTimer"), 30.0f, 100.0f, 30.0f) };
     const ModSlider::Ptr m_joystick_deadzone{ ModSlider::create(generate_name("JoystickDeadzone"), 0.01f, 0.9f, 0.15f) };
     // [GRIP_THRESHOLD] OpenXR only. Defaults match the OpenVR Index profile (Bindings.cpp): press at
@@ -1334,7 +1635,25 @@ private:
     const ModToggle::Ptr m_force_aa_settings{ ModToggle::create(generate_name("ForceAntiAliasing"), true) };
 #else
     // On new versions, since we're using the new rendering technique, we don't need to turn AA off
+#if defined(RE4) || defined(RE7) || defined(RE2)
+    // [fix143 23.11.2026] RE7: on by default (the user's configuration); [fix144] RE2 and RE4 too
+    const ModToggle::Ptr m_force_aa_settings{ ModToggle::create(generate_name("ForceAntiAliasing_V2"), true) };
+#else
     const ModToggle::Ptr m_force_aa_settings{ ModToggle::create(generate_name("ForceAntiAliasing_V2"), false) };
+#endif
+#endif
+
+    // [FXAA 12.11.2026] the game's anti-aliasing off in every view (FXAA always, SMAA / TAA while the mod's upscaler runs)
+    // and the via.render.FXAA components of the cameras (RE2, RE7, RE4)
+    const ModToggle::Ptr m_force_fxaa_off{ ModToggle::create(generate_name("ForceDisableGameAA"), true) };
+    // [WINDOW MODE fix103 20.11.2026] the game's window taken out of full screen (GAME OPTIONS 12.11.2026, made for RE7: its
+    // window resized in a loop in full screen). It ran in every game: RE4 with the game's option on full screen, which the
+    // release build before the RE2 port left alone, got a window instead (log of 20.11.2026: "window mode set to windowed
+    // (was 1)", one more resize of the swap chain a minute after the start). Off in RE4 by default: as that build.
+#if defined(RE4)
+    const ModToggle::Ptr m_force_windowed{ ModToggle::create(generate_name("ForceWindowed"), false) };
+#else
+    const ModToggle::Ptr m_force_windowed{ ModToggle::create(generate_name("ForceWindowed"), true) };
 #endif
 
     const ModToggle::Ptr m_force_motionblur_settings{ ModToggle::create(generate_name("ForceMotionBlur"), true) };
@@ -1343,6 +1662,7 @@ private:
     const ModToggle::Ptr m_force_volumetrics_settings{ ModToggle::create(generate_name("ForceVolumetrics"), true) };
     const ModToggle::Ptr m_force_lensflares_settings{ ModToggle::create(generate_name("ForceLensFlares"), true) };
     const ModToggle::Ptr m_force_dynamic_shadows_settings{ ModToggle::create(generate_name("ForceDynamicShadows"), true) };
+    std::atomic<int> m_dynamic_shadow_override{-1}; // [ENGINE SHADOWS 30.10.2026] see set_dynamic_shadow_override
 
 #if TDB_VER < 73
     const ModToggle::Ptr m_allow_engine_overlays{ ModToggle::create(generate_name("AllowEngineOverlays_V2"), true) };
@@ -1350,7 +1670,13 @@ private:
     const ModToggle::Ptr m_allow_engine_overlays{ ModToggle::create(generate_name("AllowEngineOverlays_V2"), false) };
 #endif
 
-    const ModToggle::Ptr m_desktop_fix{ ModToggle::create(generate_name("DesktopRecordingFix"), true) };
+    const ModToggle::Ptr m_desktop_fix{ ModToggle::create(generate_name("DesktopRecordingFix"),
+#if defined(RE4) || defined(RE7) || defined(RE2)
+        false // [RELEASE fix132 23.11.2026] the user's default for RE4; [fix143] and for RE7; [fix144] and for RE2
+#else
+        true
+#endif
+    ) };
     const ModToggle::Ptr m_desktop_fix_skip_present{ ModToggle::create(generate_name("DesktopRecordingFixSkipPresent"), true) };
 
 #if TDB_VER >= 73
@@ -1374,6 +1700,7 @@ private:
     bool m_flatscreen_overlay{false};          // show the frame as a flat quad instead of stereo
     float m_flatscreen_overlay_width{2.5f};    // meters
     float m_flatscreen_overlay_distance{2.0f}; // meters in front of the head
+    float m_flatscreen_overlay_aspect{0.0f};   // [CANVAS ASPECT 12.11.2026] 0 = as the texture
     std::atomic<bool> m_flatscreen_reanchor{false}; // [CANVAS_RECENTER]
 
     bool m_vr_suspended{false};                // park every engine override, see is_vr_suspended()
@@ -1416,6 +1743,29 @@ private:
         *m_use_custom_view_distance,
         *m_hmd_oriented_audio,
         *m_view_distance,
+        *m_near_clip_min,
+#if defined(RE4)
+        *m_craft_push_cm,
+#endif
+#if !defined(RE4)
+        *m_menu_panel_width,
+        *m_menu_text_scale,
+#if defined(RE7)
+        *m_menu_canvas,
+        *m_movie_canvas,
+        *m_menu_view_height,
+        *m_menu_view_back,
+        *m_menu_sheet,
+        *m_menu_sheet_size,
+        *m_menu_sheet_distance,
+        *m_menu_sheet_below,
+        *m_menu_sheet_guide_down,
+        *m_game_vr_menus,
+        *m_menu_canvas_width,
+        *m_menu_canvas_distance,
+        *m_menu_canvas_aspect,
+#endif
+#endif
         *m_motion_controls_inactivity_timer,
         *m_joystick_deadzone,
         *m_grip_use_analog,
@@ -1424,6 +1774,8 @@ private:
         *m_grip_deactivate_threshold,
         *m_force_fps_settings,
         *m_force_aa_settings,
+        *m_force_fxaa_off,
+        *m_force_windowed,
         *m_force_motionblur_settings,
         *m_force_vsync_settings,
         *m_force_lensdistortion_settings,

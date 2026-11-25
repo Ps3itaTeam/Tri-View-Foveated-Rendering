@@ -1,3 +1,4 @@
+#include "ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <spdlog/spdlog.h>
 
 #include <safetyhook/inline_hook.hpp>
@@ -11,7 +12,7 @@ FunctionHook::FunctionHook(Address target, Address destination)
     : m_target{ target },
     m_destination{ destination }
 {
-    spdlog::info("Attempting to hook {:p}->{:p}", target.ptr(), destination.ptr());
+    REVR_LOG(spdlog::info("Attempting to hook {:p}->{:p}", target.ptr(), destination.ptr()));
 }
 
 FunctionHook::~FunctionHook() {
@@ -21,7 +22,7 @@ bool FunctionHook::create() {
     std::unique_lock _{ m_initialization_mutex };
 
     if (m_target == 0 || m_destination == 0 ) {
-        spdlog::error("FunctionHook not initialized");
+        REVR_LOG(spdlog::error("FunctionHook not initialized"));
         return false;
     }
 
@@ -61,21 +62,21 @@ bool FunctionHook::create() {
                     break;
             };
 
-            spdlog::error("Failed to hook {:x}: {}", m_target, error);
+            REVR_LOG(spdlog::error("Failed to hook {:x}: {}", m_target, error));
             return false;
         }
     } catch (const std::exception& e) {
-        spdlog::error("Failed to hook {:x}: {}", m_target, e.what());
+        REVR_LOG(spdlog::error("Failed to hook {:x}: {}", m_target, e.what()));
         return false;
     } catch (...) {
-        spdlog::error("Failed to hook {:x}: unknown exception", m_target);
+        REVR_LOG(spdlog::error("Failed to hook {:x}: unknown exception", m_target));
         return false;
     }
 
     if (m_inline_hook) {
-        spdlog::info("Hooked {:x}->{:x}", m_target, m_destination);
+        REVR_LOG(spdlog::info("Hooked {:x}->{:x}", m_target, m_destination));
     } else {
-        spdlog::error("Failed to hook {:x}", m_target);
+        REVR_LOG(spdlog::error("Failed to hook {:x}", m_target));
         return false;
     }
 

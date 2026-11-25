@@ -1,3 +1,5 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] the developer tools: debug build only (Mods.cpp makes them only there)
 #include <DirectXColors.h>
 #include <../../directxtk12-src/Src/d3dx12.h>
 
@@ -101,7 +103,7 @@ std::optional<std::string> GameObjectsDisplay::initialize_d3d_resources() {
         m_d3d12.effect->SetTexture(m_d3d12.text_texture->get_srv_gpu(), m_d3d12.states->LinearWrap());
 
         m_d3d12.initialized = true;
-        spdlog::info("GameObjectsDisplay D3D12 initialized");
+        REVR_LOG(spdlog::info("GameObjectsDisplay D3D12 initialized"));
     } else {
         // TODO
     }
@@ -149,7 +151,7 @@ void GameObjectsDisplay::on_draw_dev_ui() {
 void GameObjectsDisplay::on_present() {
     if (m_needs_d3d_init) {
         if (auto result = initialize_d3d_resources(); result.has_value()) {
-            spdlog::error(result.value());
+            REVR_LOG(spdlog::error(result.value()));
         }
     }
 
@@ -385,3 +387,4 @@ void GameObjectsDisplay::on_frame() {
     }
 }
 
+#endif // !REVR_RELEASE

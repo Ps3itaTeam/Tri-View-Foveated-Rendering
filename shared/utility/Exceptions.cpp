@@ -1,3 +1,4 @@
+#include "ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <windows.h>
 #include <dbghelp.h>
 #include <spdlog/spdlog.h>
@@ -8,6 +9,11 @@
 
 namespace utility {
 namespace exceptions{
+#if REVR_RELEASE
+// [RELEASE SWITCH fix141 23.11.2026] the call stack goes only to the log: nothing to do in the release
+void dump_callstack(EXCEPTION_POINTERS*) {
+}
+#else
 static bool symbols_initialized = false;
 static HANDLE process{};
 
@@ -15,7 +21,7 @@ void dump_callstack(EXCEPTION_POINTERS* exception) {
     const auto dbghelp = LoadLibraryA("dbghelp.dll");
 
     if (dbghelp == nullptr) {
-        spdlog::error("Failed to load dbghelp.dll");
+        REVR_LOG(spdlog::error("Failed to load dbghelp.dll"));
     }
 
     const auto sym_initialize = (decltype(&SymInitialize))(dbghelp != nullptr ? GetProcAddress(dbghelp, "SymInitialize") : nullptr);
@@ -36,7 +42,7 @@ void dump_callstack(EXCEPTION_POINTERS* exception) {
     if (!symbols_initialized && sym_initialize != nullptr) {
         symbols_initialized = sym_initialize(process, NULL, TRUE);
         if (!symbols_initialized) {
-            spdlog::error("Failed to initialize symbol handler");
+            REVR_LOG(spdlog::error("Failed to initialize symbol handler"));
         }
     }
 
@@ -51,7 +57,7 @@ void dump_callstack(EXCEPTION_POINTERS* exception) {
     symbol->MaxNameLen = 255;
     symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
 
-    spdlog::error("Call stack:");
+    REVR_LOG(spdlog::error("Call stack:"));
     std::string stack_message{"\n"};
     for (auto i = 0; i < depth; ++i) {
         bool symbol_found = false;
@@ -94,8 +100,9 @@ void dump_callstack(EXCEPTION_POINTERS* exception) {
         stack_message += fmt::format(" {}\n  0x{:x}\n\n", symbol_name, stack[i]);
     }
 
-    spdlog::error(stack_message);
+    REVR_LOG(spdlog::error(stack_message));
     //CloseHandle(process);
 }
+#endif
 }
 }

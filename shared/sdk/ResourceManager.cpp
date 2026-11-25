@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include <algorithm>
 #include <spdlog/spdlog.h>
 #include <hde64.h>
@@ -91,7 +92,7 @@ intrusive_ptr<sdk::ManagedObject> ResourceManager::create_userdata(void* type_in
 
 void ResourceManager::update_pointers() {
     if (s_create_resource_fn == nullptr) {
-        spdlog::info("[ResourceManager::create_resource] Finding function...");
+        REVR_LOG(spdlog::info("[ResourceManager::create_resource] Finding function..."));
 
         const auto mod = utility::get_executable();
         const auto mod_size = *utility::get_module_size(mod);
@@ -99,7 +100,7 @@ void ResourceManager::update_pointers() {
         const auto string_ptr = utility::scan_string(mod, L"systems/rendering/AmbientBRDF.tex"); // common string that is used in all the games
 
         if (!string_ptr) {
-            spdlog::error("[ResourceManager::create_resource] Failed to find string!");
+            REVR_LOG(spdlog::error("[ResourceManager::create_resource] Failed to find string!"));
             return;
         }
 
@@ -107,11 +108,11 @@ void ResourceManager::update_pointers() {
         const auto string_reference = utility::scan_relative_reference_strict(mod, *string_ptr, "4C 8D 05");
 
         if (!string_reference) {
-            spdlog::error("[ResourceManager::create_resource] Failed to find string reference!");
+            REVR_LOG(spdlog::error("[ResourceManager::create_resource] Failed to find string reference!"));
             return;
         }
 
-        spdlog::info("[ResourceManager::create_resource] Found string reference at {:x}", *string_reference);
+        REVR_LOG(spdlog::info("[ResourceManager::create_resource] Found string reference at {:x}", *string_reference));
 
         // use HDE to disasm *string_reference - 3 and disasm forward a bit
         // to find a call instruction which is the function we want
@@ -134,7 +135,7 @@ void ResourceManager::update_pointers() {
             s_create_resource_fn = (decltype(s_create_resource_fn))utility::calculate_absolute(ip + 1);
             s_create_resource_reference = ip;
             Resource::update_pointers();
-            spdlog::info("[ResourceManager::create_resource] Found function at {:x}", (uintptr_t)s_create_resource_fn);
+            REVR_LOG(spdlog::info("[ResourceManager::create_resource] Found function at {:x}", (uintptr_t)s_create_resource_fn));
             
             // now find create_userdata, using the previous function as a reference to ignore
             // since they both have the same pattern at the start of the function
@@ -155,7 +156,7 @@ void ResourceManager::update_pointers() {
 
                     if (func && *func != (uintptr_t)s_create_resource_fn) {
                         if (std::abs((ptrdiff_t)(*func - (uintptr_t)s_create_resource_fn)) < 0x50) {
-                            spdlog::info("Exception directory may have been removed, falling back to int3 scan");
+                            REVR_LOG(spdlog::info("Exception directory may have been removed, falling back to int3 scan"));
                             exception_directory_maybe_removed = true;
                             continue;
                         }
@@ -182,12 +183,12 @@ void ResourceManager::update_pointers() {
             }
 
             if (found) {
-                spdlog::info("[ResourceManager::create_userdata] Found function at {:x}", (uintptr_t)s_create_userdata_fn);
+                REVR_LOG(spdlog::info("[ResourceManager::create_userdata] Found function at {:x}", (uintptr_t)s_create_userdata_fn));
             } else {
-                spdlog::error("[ResourceManager::create_userdata] Failed to find function!");
+                REVR_LOG(spdlog::error("[ResourceManager::create_userdata] Failed to find function!"));
             }
         } else {
-            spdlog::error("[ResourceManager::create_resource] Failed to find function!");
+            REVR_LOG(spdlog::error("[ResourceManager::create_resource] Failed to find function!"));
             return;
         }
     }
@@ -202,12 +203,12 @@ void Resource::update_pointers() {
         ResourceManager::update_pointers();
 
         if (ResourceManager::s_create_resource_reference == 0) {
-            spdlog::error("[Resource::update_pointers] ResourceManager::s_create_resource_reference is 0; insufficient data to update pointers");
+            REVR_LOG(spdlog::error("[Resource::update_pointers] ResourceManager::s_create_resource_reference is 0; insufficient data to update pointers"));
             return;
         }
     }
 
-    spdlog::info("[Resource::update_pointers] Finding function...");
+    REVR_LOG(spdlog::info("[Resource::update_pointers] Finding function..."));
 
     static auto locate_add_ref_or_release = [](uintptr_t start) -> std::optional<uintptr_t> {
         // Find the first call, can either be add_ref or release
@@ -215,7 +216,7 @@ void Resource::update_pointers() {
         const auto first_call = utility::scan_opcode(start, 30, 0xE8);
 
         if (!first_call) {
-            spdlog::error("[Resource::update_pointers] Failed to find first call!");
+            REVR_LOG(spdlog::error("[Resource::update_pointers] Failed to find first call!"));
             return std::nullopt;
         }
 
@@ -242,10 +243,10 @@ void Resource::update_pointers() {
         // if the first instruction is lock xadd/lock inc or lea rcx, [rdx+whatever], it's the add_ref function
         if ((jmp_disasm && std::string_view{buffer.data()}.starts_with("lock") || std::string_view{buffer.data()}.starts_with("lea rcx, ["))) {
             s_add_ref_fn = (decltype(s_add_ref_fn))first_function;
-            spdlog::info("[Resource::update_pointers] Found add_ref function at {:x}", (uintptr_t)s_add_ref_fn);
+            REVR_LOG(spdlog::info("[Resource::update_pointers] Found add_ref function at {:x}", (uintptr_t)s_add_ref_fn));
         } else {
             s_release_fn = (decltype(s_release_fn))first_function;
-            spdlog::info("[Resource::update_pointers] Found release function at {:x}", (uintptr_t)s_release_fn);
+            REVR_LOG(spdlog::info("[Resource::update_pointers] Found release function at {:x}", (uintptr_t)s_release_fn));
         }
 
         return first_call;
@@ -264,7 +265,7 @@ void Resource::update_pointers() {
 
             if (ix.HasLock && ix.Instruction == ND_INS_INC && ix.Operands[0].Type == ND_OP_MEM && ix.Operands[0].Info.Memory.HasBase && ix.Operands[0].Info.Memory.HasDisp) {
                 s_refcount_offset = ix.Operands[0].Info.Memory.Disp;
-                spdlog::info("[Resource::update_pointers] Found refcount offset at {:x}", *s_refcount_offset);
+                REVR_LOG(spdlog::info("[Resource::update_pointers] Found refcount offset at {:x}", *s_refcount_offset));
             }
         }
     }

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
+#include <atomic>
+
 #include "Mod.hpp"
 #include "utility/FunctionHook.hpp"
 
@@ -23,6 +27,43 @@ public:
     void ignore_application_entry(size_t hash) {
         std::unique_lock _{m_application_entry_data_mutex};
         m_ignored_application_entries.insert(hash);
+
+        // [CPU 04.11.2026] the same set as a short list read without the lock (see is_application_entry_ignored)
+        const auto n = m_ignored_fast_n.load(std::memory_order_relaxed);
+
+        if (n <= m_ignored_fast.size()) {
+            bool listed = false;
+
+            for (uint32_t i = 0; i < (std::min)(n, (uint32_t)m_ignored_fast.size()); ++i) {
+                listed = listed || m_ignored_fast[i].load(std::memory_order_relaxed) == hash;
+            }
+
+            if (!listed) {
+                if (n < m_ignored_fast.size()) {
+                    m_ignored_fast[n].store(hash, std::memory_order_relaxed);
+                }
+
+                m_ignored_fast_n.store(n + 1, std::memory_order_release); // past the list's size: the set is asked
+            }
+        }
+    }
+
+    // [CPU 04.11.2026] asked by every application entry (111 per frame on the main thread); entries are only ever added
+    bool is_application_entry_ignored(size_t hash) {
+        const auto n = m_ignored_fast_n.load(std::memory_order_acquire);
+
+        if (n > m_ignored_fast.size()) {
+            std::shared_lock _{m_application_entry_data_mutex};
+            return m_ignored_application_entries.contains(hash);
+        }
+
+        for (uint32_t i = 0; i < n; ++i) {
+            if (m_ignored_fast[i].load(std::memory_order_relaxed) == hash) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     void ignore_application_entry(std::string_view name) {
@@ -59,6 +100,10 @@ public:
             return *(RenderLayerHook<sdk::renderer::RenderLayer>*)this;
         }
     };
+
+    // [PROJECTION CALLERS 15.11.2026] the engine's return address of the get_ProjectionMatrix call handled on this thread
+    // (0 outside one): which part of the engine asks for a camera's projection
+    static uintptr_t projection_caller();
 
 protected:
     void* update_transform_hook_internal(RETransform* t, uint8_t a2, uint32_t a3);
@@ -184,6 +229,8 @@ protected:
 
     std::unordered_map<const char*, void (*)(void*)> m_application_entry_hooks;
     std::unordered_set<size_t> m_ignored_application_entries{};
+    std::array<std::atomic<size_t>, 32> m_ignored_fast{}; // [CPU 04.11.2026] see is_application_entry_ignored
+    std::atomic<uint32_t> m_ignored_fast_n{0};
 
     struct ApplicationEntryData {
         std::chrono::nanoseconds callback_time;

@@ -1,3 +1,4 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
 #include "BackBufferRenderer.hpp"
 
 std::shared_ptr<BackBufferRenderer>& BackBufferRenderer::get() {
@@ -24,10 +25,10 @@ std::optional<std::string> BackBufferRenderer::on_initialize_d3d_thread() {
 
         m_d3d12.default_rt_state = DirectX::RenderTargetState{desc.Format, DXGI_FORMAT_UNKNOWN};
 
-        spdlog::info("BackBufferRenderer D3D12 initialized");
+        REVR_LOG(spdlog::info("BackBufferRenderer D3D12 initialized"));
     } else {
         // TODO
-        spdlog::info("BackBufferRenderer D3D11 initialized");
+        REVR_LOG(spdlog::info("BackBufferRenderer D3D11 initialized"));
     }
 
     // OK
@@ -65,13 +66,13 @@ void BackBufferRenderer::render_d3d12() {
         }
 
         if (m_d3d12.backbuffers[i] == nullptr || m_d3d12.backbuffers[i]->texture.Get() != backbuffer.Get()) {
-            spdlog::info("[BackBufferRenderer] Setting up backbuffer {}", i);
+            REVR_LOG(spdlog::info("[BackBufferRenderer] Setting up backbuffer {}", i));
             
             m_d3d12.backbuffers[i].reset();
 
             m_d3d12.backbuffers[i] = std::make_unique<d3d12::TextureContext>();
             if (!m_d3d12.backbuffers[i]->setup(device, backbuffer.Get(), std::nullopt, std::nullopt, L"BackBufferRenderer Backbuffer")) {
-                spdlog::error("[BackBufferRenderer] Failed to setup backbuffer {}", i);
+                REVR_LOG(spdlog::error("[BackBufferRenderer] Failed to setup backbuffer {}", i));
                 m_d3d12.backbuffers[i].reset();
                 continue;
             }

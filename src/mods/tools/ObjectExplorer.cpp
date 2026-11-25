@@ -1,3 +1,5 @@
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE, REVR_LOG
+#if !REVR_RELEASE // [RELEASE SWITCH fix141] the developer tools: debug build only (Mods.cpp makes them only there)
 #include <sstream>
 #include <fstream>
 #include <forward_list>
@@ -1054,7 +1056,7 @@ std::string ObjectExplorer::generate_full_name(sdk::RETypeDB* tdb, uint32_t i) {
     auto& raw_t = (*tdb->types)[i];
     auto full_name = raw_t.get_full_name();
 
-    spdlog::info("{:s}", full_name);
+    REVR_LOG(spdlog::info("{:s}", full_name));
 
     return full_name;
 }
@@ -1644,7 +1646,7 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
         }
     }
 
-    spdlog::info("FIELDS BEGIN");
+    REVR_LOG(spdlog::info("FIELDS BEGIN"));
     m_sdk_dump_stage = SdkDumpStage::DUMP_FIELDS;
 
     auto dummy_constant = g->class_("__DummyClass__")->constant("__DummyConstant__")->type("int32_t");
@@ -1943,7 +1945,7 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
         }
     }
     
-    spdlog::info("PROPERTIES BEGIN");
+    REVR_LOG(spdlog::info("PROPERTIES BEGIN"));
     m_sdk_dump_stage = SdkDumpStage::DUMP_PROPERTIES;
 
     // properties
@@ -2368,7 +2370,7 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
     try {
         std::ofstream{ REFramework::get_persistent_dir("il2cpp_dump.json") } << il2cpp_dump.dump(4, ' ', false, json::error_handler_t::ignore) << std::endl;
     } catch(std::exception& e) {
-        spdlog::info("Failed to dump il2cpp_dump.json: {}", e.what());
+        REVR_LOG(spdlog::info("Failed to dump il2cpp_dump.json: {}", e.what()));
     }
 
     /*spdlog::info("Generating SDK...");
@@ -2378,7 +2380,7 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
     sdk.include("cstdint");
     sdk.generate("sdk");*/
 
-    spdlog::info("Generating IDA SDK...");
+    REVR_LOG(spdlog::info("Generating IDA SDK..."));
     m_sdk_dump_stage = SdkDumpStage::GENERATE_SDK;
 
     if (!skip_sdkgenny) {
@@ -4269,7 +4271,7 @@ int32_t ObjectExplorer::get_field_offset(REManagedObject* obj, VariableDescripto
 
     auto first_time = std::chrono::high_resolution_clock::now();
 
-    spdlog::info("{:d} {:s}", GetCurrentThreadId(), desc->name);
+    REVR_LOG(spdlog::info("{:d} {:s}", GetCurrentThreadId(), desc->name));
 
     // Compare data
     for (int32_t i = sizeof(REManagedObject); i + size <= (int32_t)class_size; i += 1) {
@@ -4386,11 +4388,11 @@ void ObjectExplorer::context_menu(void* address, std::optional<std::string> name
 
                 if (t != nullptr) {
                     if (obj->ownerGameObject == nullptr) {
-                        spdlog::info("{:s} ({:x})", t->name, (uintptr_t)obj);
+                        REVR_LOG(spdlog::info("{:s} ({:x})", t->name, (uintptr_t)obj));
                     }
                     else {
                         auto owner = obj->ownerGameObject;
-                        spdlog::info("[{:s}] {:s} ({:x})", utility::re_game_object::get_name(owner), t->name, (uintptr_t)obj);
+                        REVR_LOG(spdlog::info("[{:s}] {:s} ({:x})", utility::re_game_object::get_name(owner), t->name, (uintptr_t)obj));
                     }
                 }
 
@@ -4586,7 +4588,7 @@ bool ObjectExplorer::is_managed_object(Address address) const {
 
 void ObjectExplorer::populate_classes() {
     auto type_list = reframework::get_types()->get_raw_types();
-    spdlog::info("TypeList: {:x}", (uintptr_t)type_list);
+    REVR_LOG(spdlog::info("TypeList: {:x}", (uintptr_t)type_list));
 
     std::unordered_set<REType*> seen{};
 
@@ -4613,7 +4615,7 @@ void ObjectExplorer::populate_classes() {
                 continue;
             }
 
-            spdlog::info("{:s}", name);
+            REVR_LOG(spdlog::info("{:s}", name));
             m_sorted_types.push_back(name);
             m_types[name] = t;
 
@@ -4623,7 +4625,7 @@ void ObjectExplorer::populate_classes() {
         std::sort(m_sorted_types.begin(), m_sorted_types.end());
         return;
     } catch(...) {
-        spdlog::error("Unknown exception caught while populating classes, falling back to other method.");
+        REVR_LOG(spdlog::error("Unknown exception caught while populating classes, falling back to other method."));
     }
 
     auto tdb = sdk::RETypeDB::get();
@@ -4652,7 +4654,7 @@ void ObjectExplorer::populate_classes() {
                 continue;
             }
 
-            spdlog::info("{:s}", name);
+            REVR_LOG(spdlog::info("{:s}", name));
             m_sorted_types.push_back(name);
             m_types[name] = re_type;
 
@@ -4674,13 +4676,13 @@ void ObjectExplorer::populate_enums() {
             std::ofstream out_file(REFramework::get_persistent_dir("Enums_Internal.hpp"));
 
             auto& l = *(std::map<uint64_t, REEnumData>*)(utility::calculate_absolute(*ref + 9));
-            spdlog::info("EnumList: {:x}", (uintptr_t)&l);
-            spdlog::info("Size: {}", l.size());
+            REVR_LOG(spdlog::info("EnumList: {:x}", (uintptr_t)&l));
+            REVR_LOG(spdlog::info("Size: {}", l.size()));
 
             has_enums = l.size() > 0;
 
             for (auto& elem : l) {
-                spdlog::info(" {:x}[ {} {} ]", (uintptr_t)&elem, elem.first, elem.second.name);
+                REVR_LOG(spdlog::info(" {:x}[ {} {} ]", (uintptr_t)&elem, elem.first, elem.second.name));
 
                 std::string name = elem.second.name;
                 std::string nspace = name.substr(0, name.find_last_of("."));
@@ -4699,7 +4701,7 @@ void ObjectExplorer::populate_enums() {
                         continue;
                     }
 
-                    spdlog::info("     {} = {}", node->name, node->value);
+                    REVR_LOG(spdlog::info("     {} = {}", node->name, node->value));
                     out_file << "        " << node->name << " = " << node->value << "," << std::endl;
 
                     m_enums.emplace(elem.second.name, EnumDescriptor{ node->name, node->value });
@@ -4709,12 +4711,12 @@ void ObjectExplorer::populate_enums() {
                 out_file << "}" << std::endl;
             }
         } else {
-            spdlog::error("Failed to find EnumList");
+            REVR_LOG(spdlog::error("Failed to find EnumList"));
         }
     } catch(...) {
         has_enums = false;
         m_enums.clear();
-        spdlog::error("Unknown exception caught while populating enums, falling back to other method.");
+        REVR_LOG(spdlog::error("Unknown exception caught while populating enums, falling back to other method."));
     }
 #endif
 
@@ -4761,7 +4763,7 @@ void ObjectExplorer::populate_enums() {
 
                 out_file << "    enum " << name << " {" << std::endl;
 
-                spdlog::info("ENUM {}", t->get_full_name().c_str());
+                REVR_LOG(spdlog::info("ENUM {}", t->get_full_name().c_str()));
                 enum_types.push_back(t);
                 auto fields = t->get_fields();
 
@@ -4786,14 +4788,14 @@ void ObjectExplorer::populate_enums() {
                                 enum_data = *(int64_t*)raw_data;
                                 break;
                             default:
-                                spdlog::error("Unknown enum size: {}", t->get_valuetype_size());
+                                REVR_LOG(spdlog::error("Unknown enum size: {}", t->get_valuetype_size()));
                                 break;
                         }
 
                         m_enums.emplace(t->get_full_name(), EnumDescriptor{ f->get_name(), enum_data });
 
                         // Log
-                        spdlog::info(" {} = {}", f->get_name(), enum_data);
+                        REVR_LOG(spdlog::info(" {} = {}", f->get_name(), enum_data));
 
                         // Write to file
                         out_file << "        " << f->get_name() << " = " << enum_data << "," << std::endl;
@@ -4841,12 +4843,12 @@ void ObjectExplorer::install_veh() {
         return;
     }
 
-    spdlog::info("[ObjectExplorer] Istalling VEH");
+    REVR_LOG(spdlog::info("[ObjectExplorer] Istalling VEH"));
 
     m_veh_installed = true;
     m_veh_state.veh_handle = AddVectoredExceptionHandler(1, exception_handler_veh);
 
-    spdlog::info("[ObjectExplorer] VEH Installed: {}", m_veh_state.veh_handle != nullptr);
+    REVR_LOG(spdlog::info("[ObjectExplorer] VEH Installed: {}", m_veh_state.veh_handle != nullptr));
 }
 
 void ObjectExplorer::VEHState::set_guard_page_protections(uintptr_t address) {
@@ -5205,7 +5207,7 @@ std::string ObjectExplorer::get_enum_value_name(std::string_view enum_name, int6
     std::lock_guard l{m_enum_mutex};
 
     if (!m_enums.contains(enum_name.data())) {
-        spdlog::info("Unknown enum: {}", enum_name);
+        REVR_LOG(spdlog::info("Unknown enum: {}", enum_name));
         return "";
     }
 
@@ -5423,7 +5425,7 @@ HookManager::PreHookResult ObjectExplorer::pre_hooked_method_internal(std::vecto
     ++hooked_method.stats.call_count;
 
     if (!hooked_method.return_addresses.contains(ret_addr)) {
-        spdlog::info("Creating new entry for {}", hooked_method.name);
+        REVR_LOG(spdlog::info("Creating new entry for {}", hooked_method.name));
 
         hooked_method.return_addresses.insert(ret_addr);
         // Try to locate the containing function from the return address
@@ -5440,9 +5442,9 @@ HookManager::PreHookResult ObjectExplorer::pre_hooked_method_internal(std::vecto
                 const auto decl_type = nearest_method->get_declaring_type();
 
                 if (decl_type != nullptr) {
-                    spdlog::info("{} {}.{}", hooked_method.name, nearest_method->get_declaring_type()->get_full_name(), nearest_method->get_name());
+                    REVR_LOG(spdlog::info("{} {}.{}", hooked_method.name, nearest_method->get_declaring_type()->get_full_name(), nearest_method->get_name()));
                 } else {
-                    spdlog::info("{} {}", hooked_method.name, nearest_method->get_name());
+                    REVR_LOG(spdlog::info("{} {}", hooked_method.name, nearest_method->get_name()));
                 }
 
                 added = true;
@@ -5475,7 +5477,7 @@ HookManager::PreHookResult ObjectExplorer::pre_hooked_method_internal(std::vecto
                     });
 
                     if (!added) {
-                        spdlog::info("{} <unknown caller> @ 0x{:x}", hooked_method.name, ret_addr);
+                        REVR_LOG(spdlog::info("{} <unknown caller> @ 0x{:x}", hooked_method.name, ret_addr));
                     }
                 }
             } else {
@@ -5484,13 +5486,13 @@ HookManager::PreHookResult ObjectExplorer::pre_hooked_method_internal(std::vecto
                 const auto decl_type = nearest_method->get_declaring_type();
 
                 if (decl_type != nullptr) {
-                    spdlog::info("{} {}.{}", hooked_method.name, nearest_method->get_declaring_type()->get_full_name(), nearest_method->get_name());
+                    REVR_LOG(spdlog::info("{} {}.{}", hooked_method.name, nearest_method->get_declaring_type()->get_full_name(), nearest_method->get_name()));
                 } else {
-                    spdlog::info("{} {}", hooked_method.name, nearest_method->get_name());
+                    REVR_LOG(spdlog::info("{} {}", hooked_method.name, nearest_method->get_name()));
                 }
             }
         } else {
-            spdlog::info("{} <unknown caller> @ 0x{:x}", hooked_method.name, ret_addr);
+            REVR_LOG(spdlog::info("{} <unknown caller> @ 0x{:x}", hooked_method.name, ret_addr));
         }
     }
 
@@ -5550,3 +5552,4 @@ void ObjectExplorer::post_hooked_method_internal(uintptr_t& ret_val, sdk::REType
 void ObjectExplorer::post_hooked_method(uintptr_t& ret_val, sdk::RETypeDefinition*& ret_ty, uintptr_t ret_addr, sdk::REMethodDefinition* method) {
     ObjectExplorer::get()->post_hooked_method_internal(ret_val, ret_ty, ret_addr, method);
 }
+#endif // !REVR_RELEASE

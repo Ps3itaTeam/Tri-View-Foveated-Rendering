@@ -7,11 +7,38 @@
 #pragma comment(lib, "dxgi")
 
 #include <d3d12.h>
+#include <filesystem>
 #include <dxgi1_4.h>
 
 #include "utility/PointerHook.hpp"
 #include "utility/FunctionHook.hpp"
 #include "utility/VtableHook.hpp"
+#include "utility/ReleaseBuild.hpp" // [RELEASE SWITCH fix141] REVR_RELEASE
+
+// [DRED 14.11.2026] Device Removed Extended Data (debug build): enable() before the game makes its device (breadcrumbs after each
+// GPU operation and the allocations around a page fault, a little GPU time), log() after a device removed: the command lists the
+// GPU had not finished, the operation each one stopped at, and the faulting address with the allocations at it
+namespace d3d12_dred {
+// [DRED fix103 20.11.2026] Off unless the configuration asks for it. It was switched on at every start since 14.11.2026 (for the
+// GPU hang in RE7's main menu) and stayed on in every game: the D3D12 runtime then writes a counter into the GPU's command
+// stream after every operation of the game (draw, dispatch, copy, barrier) and keeps a record of every allocation, which
+// Microsoft measures at 2-5 % of a game's frame; the release build before the RE2 port did not have it. wanted(): the key
+// FoveatedRendering_DebugDeviceRemovedData=true in REFramework's configuration file (read as text: the game makes its device
+// before the mods load their options). active(): enable() set DRED's settings in this session.
+#if REVR_RELEASE // [RELEASE SWITCH fix141] the crash report is a debug tool: nothing of it in the release
+inline bool wanted(const std::filesystem::path&) { return false; }
+inline bool active() { return false; }
+inline void enable() {}
+inline void watch_queue(ID3D12CommandQueue*) {}
+inline void log(ID3D12Device*) {}
+#else
+bool wanted(const std::filesystem::path& config_file);
+bool active();
+void enable();
+void watch_queue(ID3D12CommandQueue* queue); // the game's queue known: its class's ExecuteCommandLists records who submits
+void log(ID3D12Device* device);
+#endif
+}
 
 class D3D12Hook
 {
@@ -74,6 +101,10 @@ public:
         return m_display_height;
     }
 
+    // [WINDOW PASS 06.11.2026 evening] the game's last Present to its window (sync interval and flags), for the log
+    uint32_t get_last_sync_interval() const { return m_last_sync_interval; }
+    uint32_t get_last_present_flags() const { return m_last_present_flags; }
+
     UINT get_render_width() const {
         return m_render_width;
     }
@@ -122,6 +153,8 @@ protected:
     bool m_is_phase_1{ true };
     bool m_inside_present{false};
     bool m_ignore_next_present{false};
+    volatile uint32_t m_last_sync_interval{0}; // [WINDOW PASS 06.11.2026 evening] written by the presenting thread, read for the log
+    volatile uint32_t m_last_present_flags{0};
 
     std::unique_ptr<PointerHook> m_present_hook{};
     std::unique_ptr<VtableHook> m_swapchain_hook{};
