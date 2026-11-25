@@ -78,11 +78,11 @@ Tested only on PS VR2 with an AMD RX 7900 XTX. Other headsets and GPUs (NVIDIA i
 ## Installation
 
 1. **Install the VR gameplay overhaul mod for your game first:**
-   - RE2: [**RE2VR Mod Reloaded**](https://www.nexusmods.com/residentevil22019/mods/2483)
+   - RE2: First unzip [**VR.zip**](https://github.com/praydog/REFramework-nightly/releases/download/nightly-01451-22c713cef9372b918c08d3c0550fcec0ea6714e4/VR.zip) and copy reframework folder next to the re2.exe then install [**RE2VR Mod Reloaded**](https://www.nexusmods.com/residentevil22019/mods/2483)
    - RE4: [**RE4VR**](https://talemann-vr.com/RE4/) by Talemann
    - RE7: [**RE7VR Reloaded**](https://www.nexusmods.com/residentevil7/mods/309) 
 
-2. **Back up the original files.** Go to the game folder (the one with the Resident Evil `.exe`) and rename these files, so you can restore them if something goes wrong:
+2. **Back up the original files.** Go to the game folder (the one with the Resident Evil `.exe`) and rename these files if there are any, so you can restore them if something goes wrong:
    - `dinput8.dll` → `dinput8.dll.orig`
    - `openvr_api.dll` → `openvr_api.dll.orig`
    - `openxr_loader.dll` → `openxr_loader.dll.orig`
@@ -106,7 +106,7 @@ Delete the two TRI-VIEW files and rename the `.orig` files back to their origina
 
 - **RE4VR (Talemann):** TRI-VIEW is a fork of Talemann's REFramework, so RE4VR works without any limitation.
 - **RE7VR Reloaded:** it comes with its own settings plugin that overwrites REFramework's configuration file at every start. That sets DLSS, which crashes the game on this build. TRI-VIEW recognizes the plugin and stops it from changing the configuration, and keeps all of the mod's other features working.
-- **RE2VR Mod Reloaded:** it also ships with an REFramework, but the mod itself is not built into it, so it works with TRI-VIEW's `dinput8.dll`.
+- **RE2VR Mod Reloaded:** You just need to unzip VR.zip first and then copy the reframework folder next to re2.exe, and it should just work.
 - **RE2VR Embraced:** from what I've read, this newer RE2 mod builds part of itself into REFramework, so it is probably not fully compatible with TRI-VIEW. If you want to use it, talk to its author about making the two work together.
 
 ---
